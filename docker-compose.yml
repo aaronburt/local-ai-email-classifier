@@ -1,0 +1,29 @@
+services:
+  email-classifier:
+    image: local-ai-email-classifier:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: local-ai-email-classifier
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-phi4-mini}
+      - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-gemma4:31b-cloud}
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-*/5 * * * *}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config.json:/app/config.json
+      - ./credentials.json:/app/credentials.json
+      - ./token.json:/app/token.json
+      - ./learned_rules.json:/app/learned_rules.json
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'const fs=require(\"fs\"); const file=\"/tmp/heartbeat.json\"; if (!fs.existsSync(file) || Date.now()-fs.statSync(file).mtimeMs > 10*60*1000) process.exit(1);'"]
+      interval: 2m
+      timeout: 10s
+      retries: 3
+      start_period: 30s

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+token.json
+credentials.json
+config.json
+.env
+*.log
+learned_rules.json
+unmatched.json
+history.csv
+.gemini/

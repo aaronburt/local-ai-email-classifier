@@ -1,0 +1,29 @@
+{
+  "name": "local-ai-email-classifier",
+  "version": "1.0.0",
+  "description": "Privacy-first local AI email classification using Ollama and Gmail API",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "classify": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "html-to-text": "^9.0.5",
+    "ollama": "^0.5.14",
+    "pdf-parse": "^1.1.1",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "@types/html-to-text": "^9.0.4",
+    "@types/node": "^22.5.0",
+    "@types/pdf-parse": "^1.1.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
