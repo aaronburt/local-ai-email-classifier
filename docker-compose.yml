@@ -1,6 +1,6 @@
 services:
   email-classifier:
-    image: local-ai-email-classifier:latest
+    image: ghcr.io/aaronburt/local-ai-email-classifier:latest
     build:
       context: .
       dockerfile: Dockerfile
