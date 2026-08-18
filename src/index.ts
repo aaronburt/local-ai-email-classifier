@@ -628,7 +628,14 @@ const main = async (): Promise<void> => {
         const freshConfig = loadConfig(values.config);
         const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
         const gc = new GmailClient(auth);
-        await runClassificationBatch(gc, freshConfig, { dryRun: false });
+        await runClassificationBatch(gc, freshConfig, { dryRun: false, trainingMode: false });
+      },
+      onTriggerTrain: async () => {
+        log.info('Manual training pass triggered from Web UI (forcing Tier 2 rule synthesis)...');
+        const freshConfig = loadConfig(values.config);
+        const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
+        const gc = new GmailClient(auth);
+        await runClassificationBatch(gc, freshConfig, { dryRun: false, trainingMode: true });
       },
       onCullMemory: async () => {
         const llm = new LLMEngine({

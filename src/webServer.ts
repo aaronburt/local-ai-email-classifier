@@ -551,7 +551,8 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     </div>
 
     <div class="header-actions">
-      <button id="btn-run" class="btn" onclick="triggerRun()">Run Classification Pass</button>
+      <button id="btn-run" class="btn" onclick="triggerRun()">Run Classification</button>
+      <button id="btn-train" class="btn btn-secondary" onclick="triggerTrain()">Train New Rules</button>
       <button id="btn-cull" class="btn btn-secondary" onclick="cullMemory()">Unload Model</button>
     </div>
   </header>
@@ -739,9 +740,33 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       } finally {
         setTimeout(() => {
           btn.disabled = false;
-          btn.textContent = 'Run Classification Pass';
+          btn.textContent = 'Run Classification';
           document.getElementById('stat-status').textContent = 'Idle';
           document.getElementById('status-dot').className = 'status-dot';
+        }, 3000);
+      }
+    };
+
+    const triggerTrain = async () => {
+      const btn = document.getElementById('btn-train');
+      btn.disabled = true;
+      btn.textContent = 'Training...';
+      document.getElementById('stat-status').textContent = 'Training Rules';
+      document.getElementById('status-dot').className = 'status-dot busy';
+
+      try {
+        const res = await fetch('/api/trigger-train', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) alert(data.error || 'Failed to trigger training pass');
+      } catch (err) {
+        alert('Network error triggering training pass');
+      } finally {
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = 'Train New Rules';
+          document.getElementById('stat-status').textContent = 'Idle';
+          document.getElementById('status-dot').className = 'status-dot';
+          loadRules();
         }, 3000);
       }
     };
@@ -972,6 +997,7 @@ export const startPersistentWebServer = (options: {
   config: AppConfig;
   port?: number;
   onTriggerRun?: () => Promise<void>;
+  onTriggerTrain?: () => Promise<void>;
   onCullMemory?: () => Promise<void>;
   onLearnStyle?: () => Promise<LearnedStyleProfile>;
   onSaveDraft?: (options: { id: string; body: string }) => Promise<void>;
@@ -1207,6 +1233,20 @@ export const startPersistentWebServer = (options: {
           });
         }
         sendJson(res, 200, { ok: true, message: 'Classification run triggered' });
+        return;
+      }
+
+      if (pathname === '/api/trigger-train' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        if (options.onTriggerTrain) {
+          options.onTriggerTrain().catch((err) => {
+            appendWebLog(`[ERROR] Manual training run failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+        sendJson(res, 200, { ok: true, message: 'Training run triggered' });
         return;
       }
 
