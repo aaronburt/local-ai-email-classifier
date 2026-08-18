@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
+import { startSetupWizard } from './setupServer.js';
 import type { AppConfig, ClassificationDecision, PartialAppConfig } from './types.js';
 
 let isShuttingDown = false;
@@ -512,10 +513,15 @@ Options:
 const main = async (): Promise<void> => {
   registerSignalHandlers();
   updateHeartbeat('healthy', { status: 'starting' });
-  const config = loadConfig(values.config);
+  let config = loadConfig(values.config);
   const limit = values.limit ? parseInt(values.limit, 10) : undefined;
   const isDryRun = Boolean(values['dry-run']);
   const isTraining = Boolean(values.train);
+
+  if (!existsSync(config.gmail.credentialsPath) || !existsSync(config.gmail.tokenPath)) {
+    await startSetupWizard(config, config.gmail.oauthPort);
+    config = loadConfig(values.config);
+  }
 
   log.info('Initializing Gmail authentication...');
   const auth = await getAuthenticatedClient(config.gmail.credentialsPath, config.gmail.tokenPath, config.gmail.oauthPort);

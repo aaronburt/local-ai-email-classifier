@@ -94,12 +94,7 @@ To deploy directly with **Dockge** on Proxmox LXC using the pre-built GHCR image
    cd /opt/stacks/email-classifier
    ```
 
-2. Copy your credentials into `./data`:
-   - `data/credentials.json`
-   - `data/token.json`
-   - `data/config.json` (optional, defaults to built-in configuration)
-
-3. Configure your `compose.yaml` in Dockge:
+2. Configure your `compose.yaml` in Dockge:
 
 ```yaml
 services:
@@ -107,6 +102,8 @@ services:
     image: ghcr.io/aaronburt/local-ai-email-classifier:latest
     container_name: local-ai-email-classifier
     restart: unless-stopped
+    ports:
+      - "3000:3000" # Exposes Web Setup Wizard on first boot
     environment:
       - EMBEDDED_OLLAMA=false # Set to true to run Ollama inside this container on CPU
       - OLLAMA_HOST=http://192.168.1.X:11434 # External Ollama IP if EMBEDDED_OLLAMA=false
@@ -117,7 +114,13 @@ services:
       - ./data:/app/data
 ```
 
-4. Click **Deploy** in Dockge. All tracking files (`learned_rules.json`, `unmatched.json`, `history.csv`, and embedded models) are automatically created and persisted inside `./data`.
+3. Click **Deploy** in Dockge.
+4. **First-Boot Web Setup Wizard**:
+   - Open `http://<your-server-ip>:3000` in your browser.
+   - Drag & drop your `credentials.json` file.
+   - Click **Sign in with Google** to complete OAuth.
+   - Test your Ollama host and click **Complete Setup & Start Classifier**.
+   - Port 3000 automatically shuts down, and the classifier begins running on its cron schedule. All tracking files (`learned_rules.json`, `unmatched.json`, `history.csv`) are saved in `./data/`.
 
 ---
 

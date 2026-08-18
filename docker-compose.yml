@@ -17,6 +17,8 @@ services:
       - CRON_SCHEDULE=${CRON_SCHEDULE:-*/5 * * * *}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
     volumes:
       - ./data:/app/data
     healthcheck:
