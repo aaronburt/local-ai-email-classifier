@@ -32,8 +32,10 @@
       "Security": "One-time passcodes (OTP), 2FA verification codes, login alerts, new device sign-in notifications, password manager alerts, SSL/TLS certificate notifications, and account security changes.",
       "Order": "Purchase receipts, order tracking, shipping dispatch notifications, prescription requests, and return postage labels.",
       "Advertisement": "Pure marketing flyers, sales newsletters, discount codes, retail shopping circulars, and promotional offers with no direct billing or security transaction.",
-      "Healthcare": "NHS doctor/GP messages, medical test results, health portal updates, dental clinic appointments, prescriptions, appointment reminders, and blood donation correspondence.",
-      "Education": "School communications, student attendance reports, homework assignments, report cards, and university academic notifications/exam results."
+      "Healthcare": "NHS doctor/GP messages, medical test results, health portal updates, dental clinic appointments, prescriptions, appointment reminders, and blood donation correspondence (e.g. NHS, Patients Know Best, Smile Club, Lawton House Surgery, Blood.co.uk).",
+      "Education": "School communications, student attendance reports, homework assignments, report cards, and university academic notifications/exam results (e.g. Eaton Bank Academy, Bromcom, The Open University, Academia).",
+      "System": "Developer alerts, GitHub notifications, CI/CD builds, Proxmox/server backup crons, DMARC reports, Cloudflare analytics, IoT device updates, and cloud infrastructure alerts (e.g. GitHub, Cloudflare, Proxmox, Oracle Cloud, Google Cloud, Tuya Smart).",
+      "Housing": "Housing association correspondence, tenancy updates, rent/maintenance communications, tenant surveys, property management notices, and home appliance/furniture warranty claims (e.g. Plus Dane Housing, Castelan Group)."
     }
   },
   "prompts": {
