@@ -4,7 +4,6 @@ import { parseArgs } from 'node:util';
 import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
 import { distillStyleFromSentEmails, generateSmartReply, PendingRepliesManager, StyleProfileManager } from './smartReply.js';
-import { scanActiveThreads, ThreadManager } from './threadManager.js';
 import { appendWebLog, startPersistentWebServer } from './webServer.js';
 import type { AppConfig, ClassificationDecision, ClassificationResult, PartialAppConfig } from './types.js';
 
@@ -663,25 +662,6 @@ const main = async (): Promise<void> => {
         });
         pendingManager.markAsDrafted(item.id);
         log.success(`Successfully saved draft reply to "${item.subject}" in your Gmail Drafts folder.`);
-      },
-      onScanThreads: async () => {
-        log.info('Scanning and evaluating unresolved conversation threads...');
-        const freshConfig = loadConfig(values.config);
-        const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
-        const gc = new GmailClient(auth);
-        const threadPath = resolveDataPath('active_threads.json', process.env['ACTIVE_THREADS_PATH']);
-        const tm = new ThreadManager(threadPath);
-        const threadModel = freshConfig.ollama.remoteModel ?? freshConfig.ollama.model;
-        const results = await scanActiveThreads(gc, tm, freshConfig.ollama.host, threadModel, 25);
-        log.success(`Conversation scan complete! Found ${results.length} active conversation thread(s).`);
-        return results;
-      },
-      onUpdateThreadStatus: async (threadId, status) => {
-        const threadPath = resolveDataPath('active_threads.json', process.env['ACTIVE_THREADS_PATH']);
-        const tm = new ThreadManager(threadPath);
-        const ok = tm.updateThreadStatus(threadId, status);
-        log.info(`Updated thread ${threadId} status to "${status}".`);
-        return ok;
       },
     });
     return;

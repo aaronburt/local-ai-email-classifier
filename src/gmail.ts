@@ -313,25 +313,6 @@ export class GmailClient {
     });
   }
 
-  async getUserEmail(): Promise<string> {
-    return withBackoff(async () => {
-      const profile = await this.gmail.users.getProfile({ userId: 'me' });
-      return profile.data.emailAddress ?? '';
-    });
-  }
-
-  async listCandidateThreadIds(maxResults = 30): Promise<string[]> {
-    return withBackoff(async () => {
-      const response = await this.gmail.users.threads.list({
-        userId: 'me',
-        q: '(in:inbox OR in:sent) -in:trash -in:spam',
-        maxResults,
-      });
-      const threads = response.data.threads ?? [];
-      return threads.map((t) => t.id).filter((id): id is string => typeof id === 'string');
-    });
-  }
-
   async listAllMessageIds(query: string): Promise<string[]> {
     const allIds: string[] = [];
     let pageToken: string | undefined;
