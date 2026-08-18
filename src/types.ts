@@ -7,6 +7,8 @@ export interface AppConfig {
     contextWindow: number;
     temperature: number;
     keepAlive: string | number;
+    remoteModel?: string;
+    remoteHost?: string;
     cloudModel?: string;
   };
   gmail: {
@@ -29,6 +31,7 @@ export interface AppConfig {
   };
   prompts?: {
     classificationSystem?: string;
+    remoteEscalationSystem?: string;
     cloudEscalationSystem?: string;
     attachmentSummarySystem?: string;
   };
@@ -105,7 +108,7 @@ export const createClassificationSchema = (allowedLabels: readonly string[]) => 
   });
 };
 
-export const createCloudClassificationSchema = (allowedLabels: readonly string[]) => {
+export const createRemoteClassificationSchema = (allowedLabels: readonly string[]) => {
   const firstLabel = allowedLabels[0];
   if (!firstLabel) {
     return z.object({
@@ -143,6 +146,8 @@ export const createCloudClassificationSchema = (allowedLabels: readonly string[]
   });
 };
 
+export const createCloudClassificationSchema = createRemoteClassificationSchema;
+
 export interface ClassificationResult {
   selected_label: string | null;
   confidence: number;
@@ -150,7 +155,7 @@ export interface ClassificationResult {
   is_action_required: boolean;
 }
 
-export interface CloudClassificationResult extends ClassificationResult {
+export interface RemoteClassificationResult extends ClassificationResult {
   learned_rule?: {
     sender_domain: string;
     topic_condition: string;
@@ -158,6 +163,8 @@ export interface CloudClassificationResult extends ClassificationResult {
     reasoning: string;
   };
 }
+
+export type CloudClassificationResult = RemoteClassificationResult;
 
 export const AttachmentSummarySchema = z.object({
   document_type: z.string(),
@@ -194,4 +201,3 @@ export interface UnmatchedEmailRecord {
   reasoning: string;
   unmatchedAt: string;
 }
-

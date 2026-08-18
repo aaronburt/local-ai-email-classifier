@@ -5,7 +5,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   AttachmentSummarySchema,
   createClassificationSchema,
-  createCloudClassificationSchema,
+  createRemoteClassificationSchema,
   type AppConfig,
   type AttachmentSummary,
   type ClassificationResult,
@@ -13,6 +13,7 @@ import {
   type GmailUserLabel,
   type LearnedRule,
   type ParsedEmailThread,
+  type RemoteClassificationResult,
   type UnmatchedEmailRecord,
 } from './types.js';
 
@@ -29,7 +30,7 @@ RULES:
 4. Output your answer in structured JSON matching the requested schema.
 5. Provide a confidence score between 0.0 and 1.0, a concise 1-sentence reasoning, and whether this email requires user action.`;
 
-export const DEFAULT_CLOUD_ESCALATION_SYSTEM_PROMPT = `You are a senior email classification authority performing a deep review of an ambiguous email.
+export const DEFAULT_REMOTE_ESCALATION_SYSTEM_PROMPT = `You are a senior email classification authority performing a deep review of an ambiguous email.
 A fast local model was unable to classify this email with high confidence. You must:
 
 1. Carefully analyze the FULL uncompressed email thread, headers, and attachments below.
@@ -46,6 +47,8 @@ ALLOWED LABELS:
 
 IMPORTANT: The learned_rule you generate will be used to teach the fast local model so it can handle similar emails independently in the future.`;
 
+export const DEFAULT_CLOUD_ESCALATION_SYSTEM_PROMPT = DEFAULT_REMOTE_ESCALATION_SYSTEM_PROMPT;
+
 export const DEFAULT_ATTACHMENT_SUMMARY_SYSTEM_PROMPT = `You are a specialized Document Summarization Agent.
 Your sole mission is to read raw document attachments (such as invoices, receipts, contracts, statements, or forms), crush the context down, and extract the key relevant parts of high importance.
 
@@ -59,138 +62,115 @@ CRITICAL EXTRACTION REQUIREMENTS:
 Always output strictly valid JSON conforming to the requested schema.`;
 
 export class RuleManager {
-  private rules: LearnedRule[] = [];
   private filePath: string;
+  private rules: LearnedRule[] = [];
 
   constructor(filePath: string) {
     this.filePath = filePath;
-    this.load();
+    this.loadRules();
   }
 
-  getActiveRules(): LearnedRule[] {
-    return this.rules;
-  }
-
-  addRule(rule: Omit<LearnedRule, 'id' | 'createdAt'>): LearnedRule {
-    const existingIndex = this.rules.findIndex(
-      (r) => r.senderDomain === rule.senderDomain && r.targetLabel === rule.targetLabel
-    );
-
-    const fullRule: LearnedRule = {
-      id: randomUUID(),
-      createdAt: new Date().toISOString(),
-      ...rule,
-    };
-
-    if (existingIndex >= 0) {
-      this.rules[existingIndex] = fullRule;
-    } else {
-      this.rules.push(fullRule);
-    }
-
-    this.save();
-    return fullRule;
-  }
-
-  private load(): void {
+  private loadRules(): void {
     if (!existsSync(this.filePath)) {
       this.rules = [];
       return;
     }
     try {
-      const content = readFileSync(this.filePath, 'utf-8');
-      if (content.trim().length === 0) {
-        this.rules = [];
-        return;
-      }
-      this.rules = JSON.parse(content) as LearnedRule[];
+      const data = readFileSync(this.filePath, 'utf-8');
+      this.rules = JSON.parse(data) as LearnedRule[];
     } catch {
       this.rules = [];
     }
   }
 
-  private save(): void {
-    try {
-      writeFileSync(this.filePath, JSON.stringify(this.rules, null, 2), 'utf-8');
-    } catch {
-      // Failed to persist learned rules
+  public getActiveRules(): LearnedRule[] {
+    return this.rules;
+  }
+
+  public addRule(rule: Omit<LearnedRule, 'id' | 'createdAt'>): LearnedRule {
+    const existingIndex = this.rules.findIndex(
+      (r) =>
+        r.senderDomain.toLowerCase() === rule.senderDomain.toLowerCase() &&
+        r.topicCondition.toLowerCase() === rule.topicCondition.toLowerCase()
+    );
+
+    const newRule: LearnedRule = {
+      ...rule,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+    };
+
+    if (existingIndex >= 0) {
+      this.rules[existingIndex] = newRule;
+    } else {
+      this.rules.push(newRule);
     }
+
+    this.saveRules();
+    return newRule;
+  }
+
+  private saveRules(): void {
+    writeFileSync(this.filePath, JSON.stringify(this.rules, null, 2), 'utf-8');
   }
 }
 
 export class UnmatchedManager {
-  private records: UnmatchedEmailRecord[] = [];
   private filePath: string;
+  private records: UnmatchedEmailRecord[] = [];
 
   constructor(filePath: string) {
     this.filePath = filePath;
-    this.load();
+    this.loadRecords();
   }
 
-  getRecords(): UnmatchedEmailRecord[] {
-    return this.records;
-  }
-
-  addRecord(record: UnmatchedEmailRecord): void {
-    const existingIndex = this.records.findIndex((r) => r.id === record.id);
-    if (existingIndex >= 0) {
-      this.records[existingIndex] = record;
-    } else {
-      this.records.push(record);
-    }
-    this.save();
-  }
-
-  clear(): void {
-    this.records = [];
-    this.save();
-  }
-
-  private load(): void {
+  private loadRecords(): void {
     if (!existsSync(this.filePath)) {
       this.records = [];
       return;
     }
     try {
-      const content = readFileSync(this.filePath, 'utf-8');
-      if (content.trim().length === 0) {
-        this.records = [];
-        return;
-      }
-      const parsed = JSON.parse(content) as unknown;
-      if (Array.isArray(parsed)) {
-        this.records = parsed.map((item) => {
-          if (typeof item === 'string') {
-            return {
-              id: item,
-              threadId: item,
-              subject: 'Unknown',
-              sender: 'Unknown',
-              date: new Date().toISOString(),
-              confidence: 0,
-              reasoning: 'Legacy ID entry',
-              unmatchedAt: new Date().toISOString(),
-            };
-          }
-          return item as UnmatchedEmailRecord;
-        });
-      } else {
-        this.records = [];
-      }
+      const data = readFileSync(this.filePath, 'utf-8');
+      this.records = JSON.parse(data) as UnmatchedEmailRecord[];
     } catch {
       this.records = [];
     }
   }
 
-  private save(): void {
-    try {
-      writeFileSync(this.filePath, JSON.stringify(this.records, null, 2), 'utf-8');
-    } catch {
-      return;
+  public getRecords(): UnmatchedEmailRecord[] {
+    return this.records;
+  }
+
+  public addRecord(record: UnmatchedEmailRecord): void {
+    const exists = this.records.some((r) => r.threadId === record.threadId);
+    if (!exists) {
+      this.records.push(record);
+      this.saveRecords();
     }
   }
-}
 
+  public recordUnmatched(
+    thread: ParsedEmailThread,
+    confidence: number,
+    reasoning: string
+  ): void {
+    const latestMessage = thread.messages[thread.messages.length - 1];
+    this.addRecord({
+      id: latestMessage?.id ?? thread.threadId,
+      threadId: thread.threadId,
+      subject: latestMessage?.subject ?? thread.subject,
+      sender: latestMessage?.sender ?? 'Unknown',
+      date: latestMessage?.date ?? new Date().toISOString(),
+      confidence,
+      reasoning,
+      unmatchedAt: new Date().toISOString(),
+    });
+  }
+
+  private saveRecords(): void {
+    writeFileSync(this.filePath, JSON.stringify(this.records, null, 2), 'utf-8');
+  }
+}
 
 export const buildClassificationPrompt = (
   thread: ParsedEmailThread,
@@ -206,9 +186,16 @@ export const buildClassificationPrompt = (
     })
     .join('\n');
 
-  const learnedRulesSection = learnedRules.length > 0
-    ? `\n\nLEARNED DISAMBIGUATION RULES (apply these with high priority):\n${learnedRules.map((rule) => `- Sender domain "${rule.senderDomain}" with topic "${rule.topicCondition}" → classify as "${rule.targetLabel}". Reason: ${rule.reasoning}`).join('\n')}`
-    : '';
+  const formattedRules =
+    learnedRules.length > 0
+      ? `\n\nLEARNED DISAMBIGUATION RULES (Prioritize these patterns):\n` +
+        learnedRules
+          .map(
+            (r) =>
+              `- From *@${r.senderDomain} when "${r.topicCondition}" → Label: "${r.targetLabel}" (${r.reasoning})`
+          )
+          .join('\n')
+      : '';
 
   const template = customSystemTemplate && customSystemTemplate.trim().length > 0
     ? customSystemTemplate
@@ -216,7 +203,7 @@ export const buildClassificationPrompt = (
 
   const systemPrompt = template
     .replace('{{ALLOWED_LABELS}}', formattedLabels)
-    .replace('{{LEARNED_RULES}}', learnedRulesSection);
+    .replace('{{LEARNED_RULES}}', formattedRules);
 
   const messagesText = formatThreadMessages(thread);
   const userPrompt = `Classify this email thread:\n\n${messagesText}`;
@@ -224,7 +211,7 @@ export const buildClassificationPrompt = (
   return { systemPrompt, userPrompt };
 };
 
-export const buildCloudEscalationPrompt = (
+export const buildRemoteEscalationPrompt = (
   thread: ParsedEmailThread,
   availableLabels: GmailUserLabel[],
   labelHints: Record<string, string> = {},
@@ -240,7 +227,7 @@ export const buildCloudEscalationPrompt = (
 
   const template = customSystemTemplate && customSystemTemplate.trim().length > 0
     ? customSystemTemplate
-    : DEFAULT_CLOUD_ESCALATION_SYSTEM_PROMPT;
+    : DEFAULT_REMOTE_ESCALATION_SYSTEM_PROMPT;
 
   const systemPrompt = template.replace('{{ALLOWED_LABELS}}', formattedLabels);
 
@@ -249,6 +236,8 @@ export const buildCloudEscalationPrompt = (
 
   return { systemPrompt, userPrompt };
 };
+
+export const buildCloudEscalationPrompt = buildRemoteEscalationPrompt;
 
 const formatThreadMessages = (thread: ParsedEmailThread): string => {
   return thread.messages
@@ -280,9 +269,11 @@ const parseJsonPayload = (content: string): unknown => {
 
 export class LLMEngine {
   private client: Ollama;
+  private remoteClient?: Ollama;
   private host: string;
   private model: string;
-  private cloudModel?: string;
+  private remoteModel?: string;
+  private remoteHost?: string;
   private contextWindow: number;
   private temperature: number;
   private keepAlive: string | number;
@@ -292,6 +283,8 @@ export class LLMEngine {
   constructor(options: {
     host: string;
     model: string;
+    remoteModel?: string;
+    remoteHost?: string;
     cloudModel?: string;
     contextWindow: number;
     temperature: number;
@@ -301,13 +294,17 @@ export class LLMEngine {
   }) {
     this.host = options.host;
     this.model = options.model;
-    this.cloudModel = options.cloudModel;
+    this.remoteModel = options.remoteModel ?? options.cloudModel;
+    this.remoteHost = options.remoteHost;
     this.contextWindow = options.contextWindow;
     this.temperature = options.temperature;
     this.keepAlive = options.keepAlive;
     this.labelHints = options.labelHints;
     this.prompts = options.prompts;
     this.client = new Ollama({ host: this.host });
+    if (this.remoteHost && this.remoteHost !== this.host) {
+      this.remoteClient = new Ollama({ host: this.remoteHost });
+    }
   }
 
   async classifyThread(
@@ -345,29 +342,30 @@ export class LLMEngine {
     return zodSchema.parse(parsedJson);
   }
 
-  async classifyWithCloud(
+  async classifyWithRemote(
     thread: ParsedEmailThread,
     availableLabels: GmailUserLabel[],
     tier1Notes: string
-  ): Promise<CloudClassificationResult> {
-    if (!this.cloudModel) {
-      throw new Error('No cloud model configured');
+  ): Promise<RemoteClassificationResult> {
+    if (!this.remoteModel) {
+      throw new Error('No remote model configured');
     }
 
     const labelNames = availableLabels.map((l) => l.name);
-    const zodSchema = createCloudClassificationSchema(labelNames);
-    const jsonSchema = zodToJsonSchema(zodSchema, 'CloudClassificationResponse');
+    const zodSchema = createRemoteClassificationSchema(labelNames);
+    const jsonSchema = zodToJsonSchema(zodSchema, 'RemoteClassificationResponse');
 
-    const { systemPrompt, userPrompt } = buildCloudEscalationPrompt(
+    const { systemPrompt, userPrompt } = buildRemoteEscalationPrompt(
       thread,
       availableLabels,
       this.labelHints,
       tier1Notes,
-      this.prompts?.cloudEscalationSystem
+      this.prompts?.remoteEscalationSystem ?? this.prompts?.cloudEscalationSystem
     );
 
-    const response = await this.client.chat({
-      model: this.cloudModel,
+    const client = this.remoteClient ?? this.client;
+    const response = await client.chat({
+      model: this.remoteModel,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -381,6 +379,14 @@ export class LLMEngine {
 
     const parsedJson = parseJsonPayload(response.message.content);
     return zodSchema.parse(parsedJson);
+  }
+
+  async classifyWithCloud(
+    thread: ParsedEmailThread,
+    availableLabels: GmailUserLabel[],
+    tier1Notes: string
+  ): Promise<CloudClassificationResult> {
+    return this.classifyWithRemote(thread, availableLabels, tier1Notes);
   }
 
   async summarizeAttachment(
@@ -438,7 +444,7 @@ Action Needed: ${parsed.action_needed ?? 'None'}`;
           keep_alive: 0,
         });
       } catch {
-        // Model already unloaded or is a cloud model
+        // Model already unloaded or is remote
       }
     }
   }

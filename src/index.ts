@@ -78,7 +78,9 @@ const DEFAULT_CONFIG: AppConfig = {
     contextWindow: parseEnvNumber('OLLAMA_CONTEXT_WINDOW', 32768),
     temperature: parseEnvNumber('OLLAMA_TEMPERATURE', 0.0),
     keepAlive: process.env['OLLAMA_KEEP_ALIVE'] ?? '15s',
-    cloudModel: process.env['OLLAMA_CLOUD_MODEL'] ?? 'gemma4:31b-cloud',
+    remoteModel: process.env['OLLAMA_REMOTE'] ?? process.env['OLLAMA_REMOTE_MODEL'] ?? process.env['OLLAMA_CLOUD_MODEL'] ?? 'gemma4:31b-cloud',
+    remoteHost: process.env['OLLAMA_REMOTE_HOST'],
+    cloudModel: process.env['OLLAMA_REMOTE'] ?? process.env['OLLAMA_REMOTE_MODEL'] ?? process.env['OLLAMA_CLOUD_MODEL'] ?? 'gemma4:31b-cloud',
   },
   gmail: {
     credentialsPath: process.env['GMAIL_CREDENTIALS_PATH'] ?? resolve(process.cwd(), 'credentials.json'),
@@ -105,7 +107,8 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   prompts: {
     classificationSystem: process.env['PROMPT_CLASSIFICATION_SYSTEM'],
-    cloudEscalationSystem: process.env['PROMPT_CLOUD_ESCALATION_SYSTEM'],
+    remoteEscalationSystem: process.env['PROMPT_REMOTE_ESCALATION_SYSTEM'] ?? process.env['PROMPT_CLOUD_ESCALATION_SYSTEM'],
+    cloudEscalationSystem: process.env['PROMPT_REMOTE_ESCALATION_SYSTEM'] ?? process.env['PROMPT_CLOUD_ESCALATION_SYSTEM'],
     attachmentSummarySystem: process.env['PROMPT_ATTACHMENT_SUMMARY_SYSTEM'],
   },
 };
@@ -120,13 +123,23 @@ export const loadConfig = (customPath?: string): AppConfig => {
       parseEnvBoolean('MARK_ADVERTS_AS_READ', false) ||
       parseEnvBoolean('GMAIL_MARK_ADVERTS_AS_READ', false);
 
+    const remoteModelValue =
+      process.env['OLLAMA_REMOTE'] ??
+      process.env['OLLAMA_REMOTE_MODEL'] ??
+      parsed.ollama?.remoteModel ??
+      process.env['OLLAMA_CLOUD_MODEL'] ??
+      parsed.ollama?.cloudModel ??
+      DEFAULT_CONFIG.ollama.remoteModel;
+
     return {
       ollama: {
         ...DEFAULT_CONFIG.ollama,
         ...parsed.ollama,
         host: process.env['OLLAMA_HOST'] ?? parsed.ollama?.host ?? DEFAULT_CONFIG.ollama.host,
         model: process.env['OLLAMA_MODEL'] ?? parsed.ollama?.model ?? DEFAULT_CONFIG.ollama.model,
-        cloudModel: process.env['OLLAMA_CLOUD_MODEL'] ?? parsed.ollama?.cloudModel ?? DEFAULT_CONFIG.ollama.cloudModel,
+        remoteModel: remoteModelValue,
+        remoteHost: process.env['OLLAMA_REMOTE_HOST'] ?? parsed.ollama?.remoteHost ?? DEFAULT_CONFIG.ollama.remoteHost,
+        cloudModel: remoteModelValue,
         contextWindow: parseEnvNumber('OLLAMA_CONTEXT_WINDOW', parsed.ollama?.contextWindow ?? DEFAULT_CONFIG.ollama.contextWindow),
         temperature: parseEnvNumber('OLLAMA_TEMPERATURE', parsed.ollama?.temperature ?? DEFAULT_CONFIG.ollama.temperature),
         keepAlive: process.env['OLLAMA_KEEP_ALIVE'] ?? parsed.ollama?.keepAlive ?? DEFAULT_CONFIG.ollama.keepAlive,
@@ -171,7 +184,8 @@ export const loadConfig = (customPath?: string): AppConfig => {
       },
       prompts: {
         classificationSystem: process.env['PROMPT_CLASSIFICATION_SYSTEM'] ?? parsed.prompts?.classificationSystem,
-        cloudEscalationSystem: process.env['PROMPT_CLOUD_ESCALATION_SYSTEM'] ?? parsed.prompts?.cloudEscalationSystem,
+        remoteEscalationSystem: process.env['PROMPT_REMOTE_ESCALATION_SYSTEM'] ?? parsed.prompts?.remoteEscalationSystem ?? process.env['PROMPT_CLOUD_ESCALATION_SYSTEM'] ?? parsed.prompts?.cloudEscalationSystem,
+        cloudEscalationSystem: process.env['PROMPT_REMOTE_ESCALATION_SYSTEM'] ?? parsed.prompts?.remoteEscalationSystem ?? process.env['PROMPT_CLOUD_ESCALATION_SYSTEM'] ?? parsed.prompts?.cloudEscalationSystem,
         attachmentSummarySystem: process.env['PROMPT_ATTACHMENT_SUMMARY_SYSTEM'] ?? parsed.prompts?.attachmentSummarySystem,
       },
     };
@@ -198,10 +212,12 @@ export const runClassificationBatch = async (
 
   const ruleManager = new RuleManager(config.classification.learnedRulesPath);
   const unmatchedManager = new UnmatchedManager(config.classification.unmatchedPath);
+  const escalationModel = config.ollama.remoteModel ?? config.ollama.cloudModel;
   const llmEngine = new LLMEngine({
     host: config.ollama.host,
     model: config.ollama.model,
-    cloudModel: config.ollama.cloudModel,
+    remoteModel: escalationModel,
+    remoteHost: config.ollama.remoteHost,
     contextWindow: config.ollama.contextWindow,
     temperature: config.ollama.temperature,
     keepAlive: config.ollama.keepAlive,
@@ -212,7 +228,7 @@ export const runClassificationBatch = async (
   registerSignalHandlers({ current: llmEngine });
 
   if (trainingMode) {
-    log.info('Training mode active: escalating all confidence < 1.00 to cloud model to distill rules.');
+    log.info('Training mode active: escalating all confidence < 1.00 to remote model to distill rules.');
   }
 
   for (const hintLabelName of Object.keys(config.classification.labelHints)) {
@@ -306,37 +322,37 @@ export const runClassificationBatch = async (
 
       if (
         classification.confidence < effectiveEscalationThreshold &&
-        config.ollama.cloudModel
+        escalationModel
       ) {
         const tier1Notes = `Tier 1 model "${config.ollama.model}" classified as "${classification.selected_label}" with confidence ${classification.confidence.toFixed(2)}. Reasoning: ${classification.reasoning}`;
 
         log.info(
-          `[Cloud Escalation] Confidence (${classification.confidence.toFixed(2)}) < ${effectiveEscalationThreshold.toFixed(2)} for "${parsedThread.subject}". Escalating to Cloud (${config.ollama.cloudModel})...`
+          `[Remote Escalation] Confidence (${classification.confidence.toFixed(2)}) < ${effectiveEscalationThreshold.toFixed(2)} for "${parsedThread.subject}". Escalating to Remote (${escalationModel})...`
         );
 
         try {
-          const cloudResult = await llmEngine.classifyWithCloud(
+          const remoteResult = await llmEngine.classifyWithRemote(
             parsedThread,
             userLabels,
             tier1Notes
           );
 
-          if (cloudResult.confidence >= classification.confidence) {
-            classification = cloudResult;
-            log.info(`[Cloud Result] Decided: "${classification.selected_label}" (Confidence: ${classification.confidence.toFixed(2)})`);
+          if (remoteResult.confidence >= classification.confidence) {
+            classification = remoteResult;
+            log.info(`[Remote Result] Decided: "${classification.selected_label}" (Confidence: ${classification.confidence.toFixed(2)})`);
           }
 
-          if (cloudResult.learned_rule) {
+          if (remoteResult.learned_rule) {
             const newRule = ruleManager.addRule({
-              senderDomain: cloudResult.learned_rule.sender_domain,
-              topicCondition: cloudResult.learned_rule.topic_condition,
-              targetLabel: cloudResult.learned_rule.target_label,
-              reasoning: cloudResult.learned_rule.reasoning,
+              senderDomain: remoteResult.learned_rule.sender_domain,
+              topicCondition: remoteResult.learned_rule.topic_condition,
+              targetLabel: remoteResult.learned_rule.target_label,
+              reasoning: remoteResult.learned_rule.reasoning,
             });
             log.info(`[Rule Learned] "${newRule.senderDomain}" → "${newRule.targetLabel}": ${newRule.reasoning}`);
           }
         } catch (err) {
-          log.warn(`Cloud model (${config.ollama.cloudModel}) unavailable, keeping Tier 1 result:`, err instanceof Error ? err.message : String(err));
+          log.warn(`Remote model (${escalationModel}) unavailable, keeping Tier 1 result:`, err instanceof Error ? err.message : String(err));
         }
       }
 
@@ -474,7 +490,7 @@ Options:
   -c, --config <path>     Path to custom config.json
   -q, --query <string>    Custom Gmail search query
   -l, --limit <number>    Maximum number of messages to process
-  -t, --train             Run in training mode (escalates any confidence < 1.0 to cloud to distill rules)
+  -t, --train             Run in training mode (escalates any confidence < 1.0 to remote model to distill rules)
   --dry-run               Simulate classification without modifying Gmail labels
   --once                  Run a single classification pass and exit
   -h, --help              Show help information

@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Stage 1: Build TypeScript source
-FROM node:24-alpine AS builder
+FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 
 COPY package*.json ./
@@ -12,11 +11,21 @@ RUN npm ci
 COPY src/ ./src/
 RUN npm run build
 
-# Stage 2: Production runtime
-FROM node:24-alpine AS runner
+FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      cron \
+      curl \
+      procps \
+      tar \
+      zstd && \
+    sed -i '/pam_loginuid.so/d' /etc/pam.d/cron && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 RUN npm ci --omit=dev

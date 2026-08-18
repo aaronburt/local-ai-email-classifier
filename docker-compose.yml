@@ -10,9 +10,10 @@ services:
       - path: .env
         required: false
     environment:
+      - EMBEDDED_OLLAMA=${EMBEDDED_OLLAMA:-false}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-phi4-mini}
-      - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-gemma4:31b-cloud}
+      - OLLAMA_REMOTE=${OLLAMA_REMOTE:-gemma4:31b-cloud}
       - CRON_SCHEDULE=${CRON_SCHEDULE:-*/5 * * * *}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -21,8 +22,11 @@ services:
       - ./credentials.json:/app/credentials.json
       - ./token.json:/app/token.json
       - ./learned_rules.json:/app/learned_rules.json
+      - ./unmatched.json:/app/unmatched.json
+      - ./history.csv:/app/history.csv
+      - ./ollama_data:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "node -e 'const fs=require(\"fs\"); const file=\"/tmp/heartbeat.json\"; if (!fs.existsSync(file) || Date.now()-fs.statSync(file).mtimeMs > 10*60*1000) process.exit(1);'"]
+      test: ["CMD-SHELL", "/usr/local/bin/node -e 'const fs=require(\"fs\"); const file=\"/tmp/heartbeat.json\"; if (!fs.existsSync(file) || Date.now()-fs.statSync(file).mtimeMs > 10*60*1000) process.exit(1);'"]
       interval: 2m
       timeout: 10s
       retries: 3

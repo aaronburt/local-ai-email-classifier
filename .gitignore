@@ -9,3 +9,9 @@ learned_rules.json
 unmatched.json
 history.csv
 .gemini/
+ollama_data/
+ollama_test/
+teamwork_projects/
+.agents/
+ORIGINAL_REQUEST.md
+RESEARCH_REPORT.md
