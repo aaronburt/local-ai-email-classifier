@@ -9,7 +9,6 @@ import {
   type AppConfig,
   type AttachmentSummary,
   type ClassificationResult,
-  type CloudClassificationResult,
   type GmailUserLabel,
   type LearnedRule,
   type ParsedEmailThread,
@@ -46,8 +45,6 @@ ALLOWED LABELS:
 {{ALLOWED_LABELS}}
 
 IMPORTANT: The learned_rule you generate will be used to teach the fast local model so it can handle similar emails independently in the future.`;
-
-export const DEFAULT_CLOUD_ESCALATION_SYSTEM_PROMPT = DEFAULT_REMOTE_ESCALATION_SYSTEM_PROMPT;
 
 export const DEFAULT_ATTACHMENT_SUMMARY_SYSTEM_PROMPT = `You are a specialized Document Summarization Agent.
 Your sole mission is to read raw document attachments (such as invoices, receipts, contracts, statements, or forms), crush the context down, and extract the key relevant parts of high importance.
@@ -108,6 +105,19 @@ export class RuleManager {
 
     this.saveRules();
     return newRule;
+  }
+
+  public findStrictDomainMatch(sender: string): LearnedRule | undefined {
+    const emailMatch = sender.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (!emailMatch || !emailMatch[1]) return undefined;
+    const domain = emailMatch[1].toLowerCase();
+    const matchingRules = this.rules.filter(
+      (r) => domain === r.senderDomain.toLowerCase() || domain.endsWith(`.${r.senderDomain.toLowerCase()}`)
+    );
+    if (matchingRules.length === 0) return undefined;
+    const firstLabel = matchingRules[0]?.targetLabel;
+    const allAgree = matchingRules.every((r) => r.targetLabel === firstLabel);
+    return allAgree ? matchingRules[0] : undefined;
   }
 
   private saveRules(): void {
@@ -236,8 +246,6 @@ export const buildRemoteEscalationPrompt = (
 
   return { systemPrompt, userPrompt };
 };
-
-export const buildCloudEscalationPrompt = buildRemoteEscalationPrompt;
 
 const formatThreadMessages = (thread: ParsedEmailThread): string => {
   return thread.messages
@@ -379,14 +387,6 @@ export class LLMEngine {
 
     const parsedJson = parseJsonPayload(response.message.content);
     return zodSchema.parse(parsedJson);
-  }
-
-  async classifyWithCloud(
-    thread: ParsedEmailThread,
-    availableLabels: GmailUserLabel[],
-    tier1Notes: string
-  ): Promise<CloudClassificationResult> {
-    return this.classifyWithRemote(thread, availableLabels, tier1Notes);
   }
 
   async summarizeAttachment(

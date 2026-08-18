@@ -82,40 +82,23 @@ export interface GmailUserLabel {
   type: string;
 }
 
-export const createClassificationSchema = (allowedLabels: readonly string[]) => {
+export const createClassificationSchema = (allowedLabels: readonly string[], options?: { withRule?: boolean }) => {
+  const confidenceSchema = z.number().transform((val) => (val > 1 ? Math.min(val / 100, 1.0) : Math.max(0, Math.min(val, 1.0))));
   const firstLabel = allowedLabels[0];
-  if (!firstLabel) {
-    return z.object({
-      selected_label: z.string().nullable(),
-      confidence: z.number().min(0).max(1),
-      reasoning: z.string(),
-      is_action_required: z.boolean(),
-    });
-  }
+  const labelSchema = firstLabel
+    ? z.enum([firstLabel, ...allowedLabels.slice(1)] as [string, ...string[]]).nullable()
+    : z.string().nullable();
 
-  const confidenceSchema = z.number().transform((val) => {
-    if (val > 1) return Math.min(val / 100, 1.0);
-    return Math.max(0, Math.min(val, 1.0));
-  });
-
-  const labelEnum = z.enum([firstLabel, ...allowedLabels.slice(1)] as [string, ...string[]]);
-
-  return z.object({
-    selected_label: labelEnum.nullable(),
+  const baseSchema = {
+    selected_label: labelSchema,
     confidence: confidenceSchema,
     reasoning: z.string(),
     is_action_required: z.boolean(),
-  });
-};
+  };
 
-export const createRemoteClassificationSchema = (allowedLabels: readonly string[]) => {
-  const firstLabel = allowedLabels[0];
-  if (!firstLabel) {
+  if (options?.withRule) {
     return z.object({
-      selected_label: z.string().nullable(),
-      confidence: z.number().min(0).max(1),
-      reasoning: z.string(),
-      is_action_required: z.boolean(),
+      ...baseSchema,
       learned_rule: z.object({
         sender_domain: z.string(),
         topic_condition: z.string(),
@@ -125,28 +108,11 @@ export const createRemoteClassificationSchema = (allowedLabels: readonly string[
     });
   }
 
-  const confidenceSchema = z.number().transform((val) => {
-    if (val > 1) return Math.min(val / 100, 1.0);
-    return Math.max(0, Math.min(val, 1.0));
-  });
-
-  const labelEnum = z.enum([firstLabel, ...allowedLabels.slice(1)] as [string, ...string[]]);
-
-  return z.object({
-    selected_label: labelEnum.nullable(),
-    confidence: confidenceSchema,
-    reasoning: z.string(),
-    is_action_required: z.boolean(),
-    learned_rule: z.object({
-      sender_domain: z.string(),
-      topic_condition: z.string(),
-      target_label: z.string(),
-      reasoning: z.string(),
-    }).optional(),
-  });
+  return z.object(baseSchema);
 };
 
-export const createCloudClassificationSchema = createRemoteClassificationSchema;
+export const createRemoteClassificationSchema = (allowedLabels: readonly string[]) =>
+  createClassificationSchema(allowedLabels, { withRule: true });
 
 export interface ClassificationResult {
   selected_label: string | null;
@@ -163,8 +129,6 @@ export interface RemoteClassificationResult extends ClassificationResult {
     reasoning: string;
   };
 }
-
-export type CloudClassificationResult = RemoteClassificationResult;
 
 export const AttachmentSummarySchema = z.object({
   document_type: z.string(),

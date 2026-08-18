@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
 import { startSetupWizard } from './setupServer.js';
-import type { AppConfig, ClassificationDecision, PartialAppConfig } from './types.js';
+import type { AppConfig, ClassificationDecision, ClassificationResult, PartialAppConfig } from './types.js';
 
 let isShuttingDown = false;
 
@@ -302,19 +302,36 @@ export const runClassificationBatch = async (
     return [];
   }
 
+const mapConcurrent = async <T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R | undefined>
+): Promise<R[]> => {
+  const results: (R | undefined)[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length && !isShuttingDown) {
+      const currentIndex = nextIndex++;
+      const item = items[currentIndex];
+      if (item !== undefined) {
+        results[currentIndex] = await fn(item, currentIndex);
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results.filter((r): r is R => r !== undefined);
+};
+
   const learnedRules = ruleManager.getActiveRules();
   if (learnedRules.length > 0) {
     log.info(`Loaded ${learnedRules.length} learned disambiguation rule(s) into Tier 1 prompt.`);
   }
 
-  log.info(`Found ${messageIds.length} message(s) matching query: "${query}".`);
-  const decisions: ClassificationDecision[] = [];
+  const concurrency = parseEnvNumber('CONCURRENCY', 3);
+  log.info(`Found ${messageIds.length} message(s) matching query: "${query}" (Concurrency: ${concurrency}).`);
 
-  for (const [index, messageId] of messageIds.entries()) {
-    if (isShuttingDown) {
-      log.warn(`Graceful shutdown: stopping batch loop after ${decisions.length} processed email(s).`);
-      break;
-    }
+  const decisions = await mapConcurrent(messageIds, concurrency, async (messageId, index) => {
+    if (isShuttingDown) return undefined;
 
     try {
       const rawMessage = await gmailClient.getMessage(messageId);
@@ -326,45 +343,62 @@ export const runClassificationBatch = async (
         return llmEngine.summarizeAttachment(filename, mimeType, rawText);
       });
 
-      const threadLength = parsedThread.fullConversationContext.length;
-      const estTokens = Math.round(threadLength / 4);
-      log.info(`[${index + 1}/${messageIds.length}] Analyzing "${parsedThread.subject}" (~${estTokens.toLocaleString()} tokens)...`);
+      const latestMessage = parsedThread.messages[parsedThread.messages.length - 1];
+      const subject = latestMessage?.subject ?? 'No Subject';
+      const sender = latestMessage?.sender ?? 'Unknown Sender';
 
-      let classification = await llmEngine.classifyThread(parsedThread, userLabels, learnedRules);
+      const directRuleMatch = !trainingMode ? ruleManager.findStrictDomainMatch(sender) : undefined;
+      let classification: ClassificationResult;
 
-      if (
-        classification.confidence < effectiveEscalationThreshold &&
-        escalationModel
-      ) {
-        const tier1Notes = `Tier 1 model "${config.ollama.model}" classified as "${classification.selected_label}" with confidence ${classification.confidence.toFixed(2)}. Reasoning: ${classification.reasoning}`;
+      if (directRuleMatch) {
+        log.info(`[${index + 1}/${messageIds.length}] [Direct Rule] "${sender}" matches "${directRuleMatch.senderDomain}" -> "${directRuleMatch.targetLabel}"`);
+        classification = {
+          selected_label: directRuleMatch.targetLabel,
+          confidence: 1.0,
+          reasoning: directRuleMatch.reasoning,
+          is_action_required: false,
+        };
+      } else {
+        const threadLength = parsedThread.fullConversationContext.length;
+        const estTokens = Math.round(threadLength / 4);
+        log.info(`[${index + 1}/${messageIds.length}] Analyzing "${parsedThread.subject}" (~${estTokens.toLocaleString()} tokens)...`);
 
-        log.info(
-          `[Remote Escalation] Confidence (${classification.confidence.toFixed(2)}) < ${effectiveEscalationThreshold.toFixed(2)} for "${parsedThread.subject}". Escalating to Remote (${escalationModel})...`
-        );
+        classification = await llmEngine.classifyThread(parsedThread, userLabels, learnedRules);
 
-        try {
-          const remoteResult = await llmEngine.classifyWithRemote(
-            parsedThread,
-            userLabels,
-            tier1Notes
+        if (
+          classification.confidence < effectiveEscalationThreshold &&
+          escalationModel
+        ) {
+          const tier1Notes = `Tier 1 model "${config.ollama.model}" classified as "${classification.selected_label}" with confidence ${classification.confidence.toFixed(2)}. Reasoning: ${classification.reasoning}`;
+
+          log.info(
+            `[Remote Escalation] Confidence (${classification.confidence.toFixed(2)}) < ${effectiveEscalationThreshold.toFixed(2)} for "${parsedThread.subject}". Escalating to Remote (${escalationModel})...`
           );
 
-          if (remoteResult.confidence >= classification.confidence) {
-            classification = remoteResult;
-            log.info(`[Remote Result] Decided: "${classification.selected_label}" (Confidence: ${classification.confidence.toFixed(2)})`);
-          }
+          try {
+            const remoteResult = await llmEngine.classifyWithRemote(
+              parsedThread,
+              userLabels,
+              tier1Notes
+            );
 
-          if (remoteResult.learned_rule) {
-            const newRule = ruleManager.addRule({
-              senderDomain: remoteResult.learned_rule.sender_domain,
-              topicCondition: remoteResult.learned_rule.topic_condition,
-              targetLabel: remoteResult.learned_rule.target_label,
-              reasoning: remoteResult.learned_rule.reasoning,
-            });
-            log.info(`[Rule Learned] "${newRule.senderDomain}" → "${newRule.targetLabel}": ${newRule.reasoning}`);
+            if (remoteResult.confidence >= classification.confidence) {
+              classification = remoteResult;
+              log.info(`[Remote Result] Decided: "${classification.selected_label}" (Confidence: ${classification.confidence.toFixed(2)})`);
+            }
+
+            if (remoteResult.learned_rule) {
+              const newRule = ruleManager.addRule({
+                senderDomain: remoteResult.learned_rule.sender_domain,
+                topicCondition: remoteResult.learned_rule.topic_condition,
+                targetLabel: remoteResult.learned_rule.target_label,
+                reasoning: remoteResult.learned_rule.reasoning,
+              });
+              log.info(`[Rule Learned] "${newRule.senderDomain}" → "${newRule.targetLabel}": ${newRule.reasoning}`);
+            }
+          } catch (err) {
+            log.warn(`Remote model (${escalationModel}) unavailable, keeping Tier 1 result:`, err instanceof Error ? err.message : String(err));
           }
-        } catch (err) {
-          log.warn(`Remote model (${escalationModel}) unavailable, keeping Tier 1 result:`, err instanceof Error ? err.message : String(err));
         }
       }
 
@@ -377,10 +411,6 @@ export const runClassificationBatch = async (
         : fallbackLabel.name;
 
       const matchedLabel = userLabels.find((label) => label.name.toLowerCase() === targetLabelName.toLowerCase()) ?? fallbackLabel;
-
-      const latestMessage = parsedThread.messages[parsedThread.messages.length - 1];
-      const subject = latestMessage?.subject ?? 'No Subject';
-      const sender = latestMessage?.sender ?? 'Unknown Sender';
 
       const shouldArchive =
         isConfident &&
@@ -409,7 +439,6 @@ export const runClassificationBatch = async (
         isMarkedRead: shouldMarkRead,
       };
 
-      decisions.push(decision);
       appendHistoryCsv(historyFilePath, decision);
 
       if (decision.isFallback) {
@@ -445,10 +474,13 @@ export const runClassificationBatch = async (
           `Applied label "${decision.chosenLabelName}"${actionSuffix} to "${subject}" (Confidence: ${decision.confidence})`
         );
       }
+
+      return decision;
     } catch (err) {
       log.error(`Failed to process message ${messageId}:`, err instanceof Error ? err.message : String(err));
+      return undefined;
     }
-  }
+  });
 
   await llmEngine.unloadModel();
   log.info('Memory culled: Ollama model unloaded from RAM.');
