@@ -30,8 +30,14 @@ export interface WebServerState {
   totalProcessed: number;
 }
 
-const logBuffer: string[] = [];
-const sseClients = new Set<ServerResponse>();
+export interface LogEntry {
+  id: number;
+  log: string;
+  timestamp: string;
+}
+
+let nextLogId = 1;
+const logBuffer: LogEntry[] = [];
 
 const resolveDataPath = (fileName: string, explicitPath?: string): string => {
   const targetName = explicitPath ?? fileName;
@@ -55,26 +61,13 @@ const resolveDataPath = (fileName: string, explicitPath?: string): string => {
 export const appendWebLog = (rawLine: string): void => {
   const line = rawLine.trim();
   if (!line) return;
-  logBuffer.push(line);
+  logBuffer.push({
+    id: nextLogId++,
+    log: line,
+    timestamp: new Date().toISOString(),
+  });
   if (logBuffer.length > MAX_LOG_LINES) {
     logBuffer.shift();
-  }
-
-  const sseData = `data: ${JSON.stringify({ log: line, timestamp: new Date().toISOString() })}\n\n`;
-  for (const client of sseClients) {
-    if (client.destroyed || client.writableEnded) {
-      sseClients.delete(client);
-      continue;
-    }
-    try {
-      client.write(sseData, (err) => {
-        if (err) {
-          sseClients.delete(client);
-        }
-      });
-    } catch {
-      sseClients.delete(client);
-    }
   }
 };
 
@@ -714,17 +707,33 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       if (tabName === 'unmatched') loadUnmatched();
     };
 
-    const initLogStream = () => {
-      const source = new EventSource('/api/logs/stream');
-      source.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.log) appendLogToView(data.log);
-        } catch {}
-      };
-      source.onerror = () => {
-        setTimeout(initLogStream, 3000);
-      };
+    let lastLogId = 0;
+    let isPollingLogs = false;
+
+    const pollLogs = async () => {
+      if (isPollingLogs) return;
+      isPollingLogs = true;
+      try {
+        const res = await fetch('/api/logs?since=' + lastLogId);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.logs && data.logs.length > 0) {
+            data.logs.forEach((item) => {
+              appendLogToView(item.log);
+              if (item.id > lastLogId) {
+                lastLogId = item.id;
+              }
+            });
+          }
+          if (data.lastId && data.lastId > lastLogId) {
+            lastLogId = data.lastId;
+          }
+        }
+      } catch {
+        // Silently retry on next interval
+      } finally {
+        isPollingLogs = false;
+      }
     };
 
     const triggerRun = async () => {
@@ -1009,7 +1018,8 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       }
     };
 
-    initLogStream();
+    pollLogs();
+    setInterval(pollLogs, 1500);
     loadReplies();
     loadRules();
     loadUnmatched();
@@ -1073,32 +1083,15 @@ export const startPersistentWebServer = (options: {
         return;
       }
 
-      if (pathname === '/api/logs/stream') {
+      if (pathname === '/api/logs' && req.method === 'GET') {
         if (!isAuthorized(req)) {
           sendJson(res, 401, { error: 'Unauthorized' });
           return;
         }
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache, no-transform',
-          Connection: 'keep-alive',
-          'Access-Control-Allow-Origin': '*',
-        });
-        res.flushHeaders?.();
-
-        for (const line of logBuffer) {
-          res.write(`data: ${JSON.stringify({ log: line, timestamp: new Date().toISOString() })}\n\n`);
-        }
-
-        const cleanup = () => {
-          sseClients.delete(res);
-        };
-
-        sseClients.add(res);
-        req.on('close', cleanup);
-        req.on('error', cleanup);
-        res.on('close', cleanup);
-        res.on('error', cleanup);
+        const sinceId = parseInt(url.searchParams.get('since') ?? '0', 10);
+        const logs = sinceId > 0 ? logBuffer.filter((l) => l.id > sinceId) : logBuffer;
+        const lastId = logBuffer.length > 0 ? logBuffer[logBuffer.length - 1]?.id ?? 0 : 0;
+        sendJson(res, 200, { logs, lastId });
         return;
       }
 
