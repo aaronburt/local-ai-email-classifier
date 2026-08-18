@@ -2,7 +2,15 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
-import type { AppConfig, LearnedRule, LearnedStyleProfile, PendingSmartReply, UnmatchedEmailRecord } from './types.js';
+import type {
+  ActiveConversationThread,
+  AppConfig,
+  ConversationThreadStatus,
+  LearnedRule,
+  LearnedStyleProfile,
+  PendingSmartReply,
+  UnmatchedEmailRecord,
+} from './types.js';
 
 const SCOPES = ['https://www.googleapis.com/auth/gmail.modify'];
 const MAX_LOG_LINES = 500;
@@ -91,6 +99,25 @@ const sendHtml = (res: ServerResponse, statusCode: number, html: string): void =
     'Content-Length': payload.length,
   });
   res.end(payload);
+};
+
+const resolveDataPath = (fileName: string, explicitPath?: string): string => {
+  const targetName = explicitPath ?? fileName;
+  if (targetName.startsWith('/') || /^[a-zA-Z]:/.test(targetName)) {
+    return targetName;
+  }
+  const dataSubpath = `${process.cwd()}/data/${targetName}`;
+  if (existsSync(dataSubpath)) {
+    return dataSubpath;
+  }
+  const rootPath = `${process.cwd()}/${targetName}`;
+  if (existsSync(rootPath)) {
+    return rootPath;
+  }
+  if (existsSync(`${process.cwd()}/data`)) {
+    return dataSubpath;
+  }
+  return rootPath;
 };
 
 const isAuthorized = (req: IncomingMessage): boolean => {
@@ -238,15 +265,6 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     .btn-secondary:hover:not(:disabled) {
       background-color: #30363d;
     }
-    .btn-danger {
-      background-color: transparent;
-      border: 1px solid var(--border);
-      color: var(--error);
-    }
-    .btn-danger:hover:not(:disabled) {
-      background-color: rgba(248, 81, 73, 0.1);
-      border-color: var(--error);
-    }
 
     .nav-bar {
       background-color: var(--surface);
@@ -341,9 +359,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       white-space: pre-wrap;
       word-break: break-all;
     }
-    .log-row {
-      margin-bottom: 1px;
-    }
+    .log-row { margin-bottom: 1px; }
     .log-info { color: #79c0ff; }
     .log-success { color: #56d364; }
     .log-warn { color: #e3b341; }
@@ -360,6 +376,172 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       justify-content: space-between;
       gap: 12px;
       font-size: 12.5px;
+    }
+
+    /* Master-Detail Tree Layout */
+    .master-detail-layout {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 14px;
+      height: calc(100vh - 160px);
+      min-height: 520px;
+    }
+    .tree-master {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .tree-master-header {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .tree-master-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .thread-nav-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-muted);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .thread-nav-item:hover {
+      background: var(--surface-hover);
+    }
+    .thread-nav-item.active {
+      background: #1c212c;
+      border-left: 3px solid var(--accent);
+    }
+    .thread-nav-subject {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .thread-nav-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    .tree-detail {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .tree-detail-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .tree-detail-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .summary-card {
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      font-size: 12.5px;
+    }
+    
+    /* Chronological Node Tree */
+    .timeline-tree {
+      position: relative;
+      padding-left: 18px;
+    }
+    .timeline-tree::before {
+      content: '';
+      position: absolute;
+      left: 6px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: var(--border);
+    }
+    .timeline-node {
+      position: relative;
+      margin-bottom: 16px;
+    }
+    .timeline-node::before {
+      content: '';
+      position: absolute;
+      left: -18px;
+      top: 10px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--border);
+      border: 2px solid var(--surface);
+    }
+    .timeline-node.user-node::before {
+      background: var(--accent);
+    }
+    .timeline-node-card {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .node-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .node-sender {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .node-body {
+      font-size: 12.5px;
+      color: var(--text);
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .status-badge.me {
+      background: rgba(210, 153, 34, 0.15);
+      color: #e3b341;
+      border: 1px solid rgba(210, 153, 34, 0.3);
+    }
+    .status-badge.other {
+      background: var(--accent-subtle);
+      color: #58a6ff;
+      border: 1px solid rgba(56, 139, 253, 0.3);
+    }
+    .status-badge.resolved {
+      background: rgba(63, 185, 80, 0.15);
+      color: #56d364;
+      border: 1px solid rgba(63, 185, 80, 0.3);
     }
 
     .reply-item {
@@ -443,12 +625,8 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       border-bottom: 1px solid var(--border-muted);
       vertical-align: top;
     }
-    tr:last-child td {
-      border-bottom: none;
-    }
-    tr:hover td {
-      background: var(--surface-hover);
-    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface-hover); }
     code {
       font-family: var(--font-mono);
       font-size: 11.5px;
@@ -531,6 +709,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
 
   <div class="nav-bar">
     <div class="nav-tab active" onclick="switchTab('logs')">Live Logs</div>
+    <div class="nav-tab" onclick="switchTab('threads')">Conversations <span id="thread-count" class="tab-count">0</span></div>
     <div class="nav-tab" onclick="switchTab('replies')">Smart Replies <span id="reply-count" class="tab-count">0</span></div>
     <div class="nav-tab" onclick="switchTab('rules')">Learned Rules <span id="rule-count" class="tab-count">0</span></div>
     <div class="nav-tab" onclick="switchTab('unmatched')">Unmatched Queue <span id="unmatched-count" class="tab-count">0</span></div>
@@ -555,7 +734,39 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       </div>
     </div>
 
-    <!-- Tab 2: Smart Replies -->
+    <!-- Tab 2: Conversations Tree Menu -->
+    <div id="pane-threads" class="tab-pane">
+      <div class="master-detail-layout">
+        <!-- Master (Left) -->
+        <div class="tree-master">
+          <div class="tree-master-header">
+            <div style="display: flex; justify-content: space-between; gap: 6px;">
+              <input type="text" id="thread-filter" class="search-input" placeholder="Filter threads..." oninput="filterThreadsList()" style="width: 100%;">
+              <button id="btn-scan-threads" class="btn btn-secondary" style="white-space: nowrap;" onclick="scanThreads()">Scan</button>
+            </div>
+            <div style="display: flex; gap: 4px;">
+              <button class="btn btn-secondary" id="filter-btn-all" style="padding: 2px 7px; font-size: 11px;" onclick="setThreadFilter('all')">All</button>
+              <button class="btn btn-secondary" id="filter-btn-me" style="padding: 2px 7px; font-size: 11px;" onclick="setThreadFilter('waiting_on_me')">Waiting on Me</button>
+              <button class="btn btn-secondary" id="filter-btn-other" style="padding: 2px 7px; font-size: 11px;" onclick="setThreadFilter('waiting_on_other')">Waiting on Other</button>
+            </div>
+          </div>
+          <div id="thread-nav-list" class="tree-master-list">
+            <div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading conversation threads...</div>
+          </div>
+        </div>
+
+        <!-- Detail (Right) -->
+        <div class="tree-detail">
+          <div id="thread-detail-content" class="tree-detail-body">
+            <div style="text-align: center; padding: 64px; color: var(--text-muted);">
+              Select a conversation thread from the left menu to view its timeline and resolution status.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Smart Replies -->
     <div id="pane-replies" class="tab-pane">
       <div class="control-banner">
         <div>
@@ -570,7 +781,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       </div>
     </div>
 
-    <!-- Tab 3: Learned Rules -->
+    <!-- Tab 4: Learned Rules -->
     <div id="pane-rules" class="tab-pane">
       <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
         <input type="text" id="rules-filter" class="search-input" placeholder="Filter rules by domain or label..." oninput="filterRules()" style="width: 300px;">
@@ -593,7 +804,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       </div>
     </div>
 
-    <!-- Tab 4: Unmatched Queue -->
+    <!-- Tab 5: Unmatched Queue -->
     <div id="pane-unmatched" class="tab-pane">
       <div class="data-table-wrap">
         <table>
@@ -617,6 +828,10 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     let autoscroll = true;
     let rawLogLines = [];
     let cachedRules = [];
+    let cachedThreads = [];
+    let activeThreadId = null;
+    let threadFilterStatus = 'all';
+
     const terminalEl = document.getElementById('terminal-output');
     const autoScrollChk = document.getElementById('auto-scroll-chk');
 
@@ -671,12 +886,13 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
 
     const switchTab = (tabName) => {
       document.querySelectorAll('.nav-tab').forEach((t, i) => {
-        const isSelected = (tabName === 'logs' && i === 0) || (tabName === 'replies' && i === 1) || (tabName === 'rules' && i === 2) || (tabName === 'unmatched' && i === 3);
+        const isSelected = (tabName === 'logs' && i === 0) || (tabName === 'threads' && i === 1) || (tabName === 'replies' && i === 2) || (tabName === 'rules' && i === 3) || (tabName === 'unmatched' && i === 4);
         t.className = isSelected ? 'nav-tab active' : 'nav-tab';
       });
       document.querySelectorAll('.tab-pane').forEach((tc) => tc.classList.remove('active'));
       document.getElementById('pane-' + tabName).classList.add('active');
 
+      if (tabName === 'threads') loadThreads();
       if (tabName === 'replies') { loadReplies(); loadStyleProfile(); }
       if (tabName === 'rules') loadRules();
       if (tabName === 'unmatched') loadUnmatched();
@@ -729,6 +945,150 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       finally {
         btn.disabled = false;
       }
+    };
+
+    /* Threads Master-Detail Controller */
+    const loadThreads = async () => {
+      try {
+        const res = await fetch('/api/threads');
+        const data = await res.json();
+        cachedThreads = data.threads || [];
+        document.getElementById('thread-count').textContent = cachedThreads.filter(t => t.status !== 'resolved').length;
+        renderThreadsList();
+        if (activeThreadId) renderThreadDetail(activeThreadId);
+      } catch {}
+    };
+
+    const setThreadFilter = (status) => {
+      threadFilterStatus = status;
+      document.querySelectorAll('[id^="filter-btn-"]').forEach(b => b.className = 'btn btn-secondary');
+      const activeBtn = document.getElementById('filter-btn-' + (status === 'waiting_on_me' ? 'me' : status === 'waiting_on_other' ? 'other' : 'all'));
+      if (activeBtn) activeBtn.className = 'btn';
+      renderThreadsList();
+    };
+
+    const filterThreadsList = () => {
+      renderThreadsList();
+    };
+
+    const renderThreadsList = () => {
+      const listEl = document.getElementById('thread-nav-list');
+      const searchVal = document.getElementById('thread-filter').value.toLowerCase().trim();
+
+      const filtered = cachedThreads.filter(t => {
+        const matchesStatus = threadFilterStatus === 'all' ? (t.status !== 'resolved') : (t.status === threadFilterStatus);
+        const matchesSearch = !searchVal ||
+          (t.subject && t.subject.toLowerCase().includes(searchVal)) ||
+          (t.otherParty && t.otherParty.toLowerCase().includes(searchVal)) ||
+          (t.otherPartyEmail && t.otherPartyEmail.toLowerCase().includes(searchVal));
+        return matchesStatus && matchesSearch;
+      });
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-muted);">No threads found.</div>';
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(t => {
+        const isSelected = t.threadId === activeThreadId ? 'active' : '';
+        const badgeClass = t.status === 'waiting_on_me' ? 'me' : t.status === 'waiting_on_other' ? 'other' : 'resolved';
+        const badgeText = t.status === 'waiting_on_me' ? 'Waiting on Me' : t.status === 'waiting_on_other' ? 'Waiting on Other' : 'Resolved';
+
+        return '<div class="thread-nav-item ' + isSelected + '" onclick="selectThread(\\'' + t.threadId + '\\')">' +
+          '<div class="thread-nav-subject">' + (t.subject || 'No Subject') + '</div>' +
+          '<div class="thread-nav-meta">' +
+            '<span>' + (t.otherParty || 'Unknown') + '</span>' +
+            '<span class="status-badge ' + badgeClass + '">' + badgeText + '</span>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    };
+
+    const selectThread = (threadId) => {
+      activeThreadId = threadId;
+      renderThreadsList();
+      renderThreadDetail(threadId);
+    };
+
+    const renderThreadDetail = (threadId) => {
+      const thread = cachedThreads.find(t => t.threadId === threadId);
+      const detailEl = document.getElementById('thread-detail-content');
+      if (!thread) {
+        detailEl.innerHTML = '<div style="text-align: center; padding: 64px; color: var(--text-muted);">Thread not found.</div>';
+        return;
+      }
+
+      const isMe = thread.status === 'waiting_on_me';
+      const badgeClass = thread.status === 'waiting_on_me' ? 'me' : thread.status === 'waiting_on_other' ? 'other' : 'resolved';
+      const badgeText = thread.status === 'waiting_on_me' ? 'Waiting on Me' : thread.status === 'waiting_on_other' ? 'Waiting on Other' : 'Resolved';
+
+      const messagesHtml = (thread.messages || []).map(m => {
+        const isUser = m.isFromUser;
+        return '<div class="timeline-node ' + (isUser ? 'user-node' : '') + '">' +
+          '<div class="timeline-node-card">' +
+            '<div class="node-header">' +
+              '<span class="node-sender">' + (isUser ? 'You' : m.sender) + '</span>' +
+              '<span>' + (m.date || '') + '</span>' +
+            '</div>' +
+            '<div class="node-body">' + (m.bodyText || m.snippet || '') + '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      detailEl.innerHTML = '<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">' +
+        '<div>' +
+          '<h3 style="font-size: 15px; font-weight: 600; color: var(--text);">' + (thread.subject || 'No Subject') + '</h3>' +
+          '<div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">' +
+            'With: <code>' + (thread.otherParty || thread.otherPartyEmail || 'Unknown') + '</code> &bull; ' + (thread.messages?.length || 0) + ' messages' +
+          '</div>' +
+        '</div>' +
+        '<div style="display: flex; gap: 8px; align-items: center;">' +
+          '<span class="status-badge ' + badgeClass + '">' + badgeText + '</span>' +
+          '<button class="btn btn-secondary" onclick="updateStatus(\\'' + thread.threadId + '\\', \\'resolved\\')">Mark Resolved</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="summary-card">' +
+        '<div style="font-weight: 600; margin-bottom: 3px;">Executive Summary:</div>' +
+        '<div style="color: var(--text);">' + (thread.threadSummary || '-') + '</div>' +
+        (thread.nextActionNeeded ? '<div style="margin-top: 6px; color: #e3b341; font-weight: 500;">Next Action: ' + thread.nextActionNeeded + '</div>' : '') +
+      '</div>' +
+      '<div style="font-weight: 600; font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Conversation Timeline:</div>' +
+      '<div class="timeline-tree">' + messagesHtml + '</div>';
+    };
+
+    const scanThreads = async () => {
+      const btn = document.getElementById('btn-scan-threads');
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+      try {
+        const res = await fetch('/api/threads/scan', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          loadThreads();
+          appendLogToView('[SUCCESS] Conversation threads scanned.');
+        } else {
+          alert(data.error || 'Failed to scan threads');
+        }
+      } catch (err) {
+        alert('Network error scanning threads');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Scan';
+      }
+    };
+
+    const updateStatus = async (threadId, status) => {
+      try {
+        const res = await fetch('/api/threads/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId, status })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          loadThreads();
+        }
+      } catch {}
     };
 
     const loadRules = async () => {
@@ -918,6 +1278,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     };
 
     initLogStream();
+    loadThreads();
     loadReplies();
     loadRules();
     loadUnmatched();
@@ -932,6 +1293,8 @@ export const startPersistentWebServer = (options: {
   onCullMemory?: () => Promise<void>;
   onLearnStyle?: () => Promise<LearnedStyleProfile>;
   onSaveDraft?: (options: { id: string; body: string }) => Promise<void>;
+  onScanThreads?: () => Promise<ActiveConversationThread[]>;
+  onUpdateThreadStatus?: (threadId: string, status: ConversationThreadStatus) => Promise<boolean>;
 }): http.Server => {
   const port = options.port ?? options.config.gmail.oauthPort ?? 3000;
   const config = options.config;
@@ -1010,24 +1373,56 @@ export const startPersistentWebServer = (options: {
         return;
       }
 
-const resolveDataPath = (fileName: string, explicitPath?: string): string => {
-  const targetName = explicitPath ?? fileName;
-  if (targetName.startsWith('/') || /^[a-zA-Z]:/.test(targetName)) {
-    return targetName;
-  }
-  const dataSubpath = `${process.cwd()}/data/${targetName}`;
-  if (existsSync(dataSubpath)) {
-    return dataSubpath;
-  }
-  const rootPath = `${process.cwd()}/${targetName}`;
-  if (existsSync(rootPath)) {
-    return rootPath;
-  }
-  if (existsSync(`${process.cwd()}/data`)) {
-    return dataSubpath;
-  }
-  return rootPath;
-};
+      if (pathname === '/api/threads' && req.method === 'GET') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const threadPath = resolveDataPath('active_threads.json', process.env['ACTIVE_THREADS_PATH']);
+        let threads: ActiveConversationThread[] = [];
+        if (existsSync(threadPath)) {
+          try {
+            threads = JSON.parse(readFileSync(threadPath, 'utf-8')) as ActiveConversationThread[];
+          } catch {}
+        }
+        sendJson(res, 200, { threads });
+        return;
+      }
+
+      if (pathname === '/api/threads/scan' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        if (!options.onScanThreads) {
+          sendJson(res, 500, { error: 'Thread scanning not configured' });
+          return;
+        }
+        const threads = await options.onScanThreads();
+        sendJson(res, 200, { ok: true, threads });
+        return;
+      }
+
+      if (pathname === '/api/threads/status' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const threadId = String(body['threadId'] ?? '');
+        const status = body['status'] as ConversationThreadStatus;
+
+        if (!threadId || !status) {
+          sendJson(res, 400, { error: 'Missing threadId or status' });
+          return;
+        }
+
+        if (options.onUpdateThreadStatus) {
+          await options.onUpdateThreadStatus(threadId, status);
+        }
+        sendJson(res, 200, { ok: true });
+        return;
+      }
 
       if (pathname === '/api/smart-replies' && req.method === 'GET') {
         if (!isAuthorized(req)) {

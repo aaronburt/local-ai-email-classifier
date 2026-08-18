@@ -207,3 +207,40 @@ export interface PendingSmartReply {
   createdAt: string;
   status: 'pending' | 'drafted' | 'dismissed';
 }
+
+export interface ConversationMessageNode {
+  messageId: string;
+  sender: string;
+  recipient: string;
+  date: string;
+  snippet: string;
+  bodyText: string;
+  isFromUser: boolean;
+}
+
+export type ConversationThreadStatus = 'waiting_on_me' | 'waiting_on_other' | 'resolved';
+
+export interface ActiveConversationThread {
+  threadId: string;
+  subject: string;
+  otherParty: string;
+  otherPartyEmail: string;
+  status: ConversationThreadStatus;
+  lastMessageDate: string;
+  messageCount: number;
+  threadSummary: string;
+  nextActionNeeded?: string;
+  messages: ConversationMessageNode[];
+  updatedAt: string;
+}
+
+export const ThreadResolutionAnalysisSchema = z.object({
+  status: z.enum(['waiting_on_me', 'waiting_on_other', 'resolved']).describe('Current resolution status of the thread'),
+  other_party_name: z.string().describe('The name or organization of the external party'),
+  other_party_email: z.string().describe('The email address of the external party'),
+  thread_summary: z.string().describe('A concise 1-sentence executive summary of the conversation history'),
+  next_action_needed: z.string().nullable().describe('Specific next action required or null if resolved'),
+  confidence: z.number().min(0).max(1).describe('Confidence score between 0 and 1'),
+});
+
+export type ThreadResolutionAnalysis = z.infer<typeof ThreadResolutionAnalysisSchema>;
