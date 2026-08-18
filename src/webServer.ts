@@ -125,418 +125,488 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
   <title>Local AI Email Classifier</title>
   <style>
     :root {
-      --bg: #090d16;
-      --card: #111827;
-      --card-alt: #1a2234;
-      --border: #1f293d;
-      --border-focus: #3b82f6;
-      --text: #f3f4f6;
-      --text-muted: #9ca3af;
-      --primary: #3b82f6;
-      --primary-hover: #2563eb;
-      --success: #10b981;
-      --error: #ef4444;
-      --warning: #f59e0b;
-      --code-bg: #0d1117;
-      --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-subtle: #21262d;
+      --surface-hover: #1f242c;
+      --border: #30363d;
+      --border-muted: #21262d;
+      --text: #e6edf3;
+      --text-muted: #848d97;
+      --accent: #2f81f7;
+      --accent-hover: #388bfd;
+      --accent-subtle: rgba(56, 139, 253, 0.15);
+      --success: #3fb950;
+      --warning: #d29922;
+      --error: #f85149;
+      --code-bg: #090d12;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background-color: var(--bg);
       color: var(--text);
-      font-family: var(--font);
-      line-height: 1.5;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.45;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
     }
+
     header {
-      background-color: var(--card);
+      background-color: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 16px 24px;
+      padding: 10px 16px;
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
       gap: 12px;
     }
-    .brand svg {
-      width: 28px;
-      height: 28px;
-      fill: var(--primary);
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
     }
-    .brand h1 {
-      font-size: 18px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
+    .app-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.01em;
     }
+    .meta-tags {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .meta-tag {
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-right: 4px;
+    }
+    .status-dot.busy {
+      background: var(--warning);
+    }
+
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
     }
     .btn {
-      background-color: var(--primary);
+      background-color: #238636;
       color: #ffffff;
-      border: none;
-      border-radius: 6px;
-      padding: 8px 14px;
-      font-size: 13px;
-      font-weight: 600;
+      border: 1px solid rgba(240, 246, 252, 0.1);
+      border-radius: 5px;
+      padding: 5px 11px;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      transition: background 0.15s;
+      gap: 5px;
+      font-family: inherit;
+      transition: background 0.1s;
     }
     .btn:hover:not(:disabled) {
-      background-color: var(--primary-hover);
+      background-color: #2ea043;
     }
     .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
     .btn-secondary {
-      background-color: var(--card-alt);
+      background-color: var(--surface-subtle);
       border: 1px solid var(--border);
       color: var(--text);
     }
     .btn-secondary:hover:not(:disabled) {
-      background-color: #242f48;
+      background-color: #30363d;
     }
-    .badge {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      padding: 3px 8px;
-      border-radius: 9999px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
+    .btn-danger {
+      background-color: transparent;
+      border: 1px solid var(--border);
+      color: var(--error);
     }
-    .badge-success { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
-    .badge-info { background: rgba(59, 130, 246, 0.15); color: var(--primary); border: 1px solid rgba(59, 130, 246, 0.3); }
-    
-    .status-bar {
-      background-color: #0d1322;
+    .btn-danger:hover:not(:disabled) {
+      background-color: rgba(248, 81, 73, 0.1);
+      border-color: var(--error);
+    }
+
+    .nav-bar {
+      background-color: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 10px 24px;
+      padding: 0 16px;
       display: flex;
-      flex-wrap: wrap;
-      gap: 24px;
-      font-size: 13px;
-      color: var(--text-muted);
+      gap: 2px;
     }
-    .status-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .status-item strong {
-      color: var(--text);
-    }
-    
-    .nav-tabs {
-      display: flex;
-      gap: 4px;
-      padding: 12px 24px 0 24px;
-      border-bottom: 1px solid var(--border);
-      background-color: var(--card);
-    }
-    .tab {
-      padding: 8px 16px;
-      font-size: 13px;
-      font-weight: 600;
+    .nav-tab {
+      padding: 9px 12px;
+      font-size: 12.5px;
+      font-weight: 500;
       color: var(--text-muted);
       cursor: pointer;
       border-bottom: 2px solid transparent;
-      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.1s;
+      user-select: none;
     }
-    .tab:hover {
+    .nav-tab:hover {
       color: var(--text);
     }
-    .tab.active {
-      color: var(--primary);
-      border-bottom-color: var(--primary);
+    .nav-tab.active {
+      color: var(--text);
+      border-bottom-color: var(--accent);
     }
-    
+    .tab-count {
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      padding: 1px 5px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
     main {
       flex: 1;
-      padding: 24px;
+      padding: 16px;
       max-width: 1400px;
       width: 100%;
       margin: 0 auto;
     }
-    .tab-content {
+    .tab-pane {
       display: none;
     }
-    .tab-content.active {
+    .tab-pane.active {
       display: block;
     }
-    
-    .terminal-window {
+
+    .terminal-container {
       background-color: var(--code-bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
+      border-radius: 6px;
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 240px);
+      height: calc(100vh - 150px);
       min-height: 480px;
     }
-    .terminal-header {
-      background-color: var(--card);
+    .terminal-toolbar {
+      background-color: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 8px 14px;
+      padding: 6px 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-size: 12px;
-      color: var(--text-muted);
+      gap: 12px;
     }
-    .terminal-body {
+    .search-input {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 3px 8px;
+      color: var(--text);
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      width: 220px;
+    }
+    .search-input:focus {
+      border-color: var(--accent);
+    }
+    .terminal-output {
       flex: 1;
-      padding: 16px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 12.5px;
-      line-height: 1.6;
+      padding: 12px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.55;
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-all;
     }
-    .log-line {
-      margin-bottom: 2px;
+    .log-row {
+      margin-bottom: 1px;
     }
-    .log-info { color: #93c5fd; }
-    .log-success { color: #34d399; font-weight: 600; }
-    .log-warn { color: #fbbf24; }
-    .log-error { color: #f87171; font-weight: 600; }
-    
-    .table-container {
-      background-color: var(--card);
+    .log-info { color: #79c0ff; }
+    .log-success { color: #56d364; }
+    .log-warn { color: #e3b341; }
+    .log-error { color: #ff7b72; }
+
+    .control-banner {
+      background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12.5px;
+    }
+
+    .reply-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .reply-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .reply-subject {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .reply-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .snippet-preview {
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .editor-textarea {
+      width: 100%;
+      min-height: 100px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 9px 10px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12.5px;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+      margin-bottom: 10px;
+    }
+    .editor-textarea:focus {
+      border-color: var(--accent);
+    }
+    .reply-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .data-table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
       overflow: hidden;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
-      text-align: left;
+      font-size: 12px;
     }
     th {
-      background-color: #141c2e;
-      padding: 12px 16px;
+      background: var(--surface-subtle);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
       font-weight: 600;
       color: var(--text-muted);
-      border-bottom: 1px solid var(--border);
     }
     td {
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-muted);
+      vertical-align: top;
     }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background-color: rgba(255, 255, 255, 0.02); }
-    
-    .reply-card {
-      background-color: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 20px;
-      margin-bottom: 16px;
+    tr:last-child td {
+      border-bottom: none;
     }
-    .reply-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 12px;
+    tr:hover td {
+      background: var(--surface-hover);
     }
-    .snippet-box {
-      background-color: var(--card-alt);
-      border-left: 3px solid var(--primary);
-      padding: 10px 14px;
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-bottom: 14px;
-      border-radius: 0 4px 4px 0;
+    code {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      background: var(--surface-subtle);
+      padding: 2px 4px;
+      border-radius: 3px;
     }
-    .draft-textarea {
-      width: 100%;
-      min-height: 120px;
-      background-color: var(--code-bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px;
-      color: var(--text);
-      font-family: inherit;
-      font-size: 13.5px;
-      line-height: 1.5;
-      resize: vertical;
-      outline: none;
-      margin-bottom: 14px;
-    }
-    .draft-textarea:focus {
-      border-color: var(--primary);
+    .label-pill {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--accent-subtle);
+      color: #58a6ff;
+      border: 1px solid rgba(56, 139, 253, 0.3);
     }
 
     #auth-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(9, 13, 22, 0.9);
+      background: rgba(13, 17, 23, 0.95);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 100;
     }
-    .auth-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 32px;
-      width: 100%;
-      max-width: 380px;
-      text-align: center;
-    }
-    input[type="password"] {
-      width: 100%;
-      background: var(--card-alt);
+    .auth-box {
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 10px 14px;
+      padding: 24px;
+      width: 100%;
+      max-width: 320px;
+    }
+    .auth-input {
+      width: 100%;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 7px 10px;
       color: var(--text);
-      font-size: 14px;
-      margin: 16px 0;
+      font-size: 13px;
+      margin: 12px 0;
       outline: none;
     }
-    input[type="password"]:focus {
-      border-color: var(--primary);
+    .auth-input:focus {
+      border-color: var(--accent);
     }
   </style>
 </head>
 <body>
   ${hasPasswordAuth ? `
   <div id="auth-overlay">
-    <div class="auth-card">
-      <h2 style="font-size: 18px; margin-bottom: 8px;">Access Restricted</h2>
-      <p style="font-size: 13px; color: var(--text-muted);">Enter your WEB_PASSWORD to continue:</p>
-      <input type="password" id="auth-pwd-input" placeholder="Password" onkeydown="if(event.key==='Enter') submitAuth()">
-      <button class="btn" style="width: 100%; justify-content: center;" onclick="submitAuth()">Unlock Dashboard</button>
-      <p id="auth-error" style="color: var(--error); font-size: 12px; margin-top: 10px; display: none;">Invalid password</p>
+    <div class="auth-box">
+      <div style="font-weight: 600; margin-bottom: 4px;">Authentication Required</div>
+      <div style="color: var(--text-muted); font-size: 12px;">Enter your WEB_PASSWORD:</div>
+      <input type="password" id="auth-pwd-input" class="auth-input" placeholder="Password" onkeydown="if(event.key==='Enter') submitAuth()">
+      <button class="btn" style="width: 100%; justify-content: center;" onclick="submitAuth()">Unlock</button>
+      <div id="auth-error" style="color: var(--error); font-size: 11px; margin-top: 8px; display: none;">Invalid password</div>
     </div>
   </div>` : ''}
 
   <header>
-    <div class="brand">
-      <svg viewBox="0 0 24 24">
-        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
-      </svg>
-      <div>
-        <h1>Local AI Email Classifier</h1>
+    <div class="header-left">
+      <div class="app-title">local-ai-email-classifier</div>
+      <div class="meta-tags">
+        <span class="meta-tag"><span id="status-dot" class="status-dot"></span><span id="stat-status">Idle</span></span>
+        <span class="meta-tag">Model: <code>${state.model}</code></span>
+        ${state.remoteModel ? `<span class="meta-tag">Remote: <code>${state.remoteModel}</code></span>` : ''}
+        <span class="meta-tag">Cron: <code>${state.cronSchedule}</code></span>
       </div>
-      <span id="daemon-badge" class="badge badge-success">Daemon Healthy</span>
     </div>
 
     <div class="header-actions">
-      <button id="btn-run" class="btn" onclick="triggerRun()">
-        <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-        Classify Now
-      </button>
-      <button id="btn-cull" class="btn btn-secondary" onclick="cullMemory()">
-        <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        Cull Memory
-      </button>
+      <button id="btn-run" class="btn" onclick="triggerRun()">Run Classification Pass</button>
+      <button id="btn-cull" class="btn btn-secondary" onclick="cullMemory()">Unload Model</button>
     </div>
   </header>
 
-  <div class="status-bar">
-    <div class="status-item">Local Model: <strong id="stat-model">${state.model}</strong></div>
-    ${state.remoteModel ? `<div class="status-item">Remote Escalation: <strong id="stat-remote">${state.remoteModel}</strong></div>` : ''}
-    <div class="status-item">Schedule: <strong id="stat-cron">${state.cronSchedule}</strong></div>
-    <div class="status-item">Status: <strong id="stat-status">Idle</strong></div>
-  </div>
-
-  <div class="nav-tabs">
-    <div class="tab active" onclick="switchTab('logs')">Live Logs</div>
-    <div class="tab" onclick="switchTab('replies')">💬 Smart Replies (<span id="reply-count">-</span>)</div>
-    <div class="tab" onclick="switchTab('rules')">Learned Rules (<span id="rule-count">-</span>)</div>
-    <div class="tab" onclick="switchTab('unmatched')">Unmatched Queue (<span id="unmatched-count">-</span>)</div>
+  <div class="nav-bar">
+    <div class="nav-tab active" onclick="switchTab('logs')">Live Logs</div>
+    <div class="nav-tab" onclick="switchTab('replies')">Smart Replies <span id="reply-count" class="tab-count">0</span></div>
+    <div class="nav-tab" onclick="switchTab('rules')">Learned Rules <span id="rule-count" class="tab-count">0</span></div>
+    <div class="nav-tab" onclick="switchTab('unmatched')">Unmatched Queue <span id="unmatched-count" class="tab-count">0</span></div>
   </div>
 
   <main>
     <!-- Tab 1: Live Logs -->
-    <div id="tab-logs" class="tab-content active">
-      <div class="terminal-window">
-        <div class="terminal-header">
-          <span>Real-time SSE Stream</span>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <label style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
-              <input type="checkbox" id="auto-scroll-chk" checked> Auto-Scroll
+    <div id="pane-logs" class="tab-pane active">
+      <div class="terminal-container">
+        <div class="terminal-toolbar">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="text" id="log-filter" class="search-input" placeholder="Filter output..." oninput="filterLogs()">
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none;">
+              <input type="checkbox" id="auto-scroll-chk" checked> Auto-scroll
             </label>
-            <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="clearLogs()">Clear</button>
+            <button class="btn btn-secondary" style="padding: 2px 7px; font-size: 11px;" onclick="clearLogs()">Clear</button>
           </div>
         </div>
-        <div id="terminal-body" class="terminal-body"></div>
+        <div id="terminal-output" class="terminal-output"></div>
       </div>
     </div>
 
     <!-- Tab 2: Smart Replies -->
-    <div id="tab-replies" class="tab-content">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: var(--card); padding: 14px 20px; border-radius: 8px; border: 1px solid var(--border);">
+    <div id="pane-replies" class="tab-pane">
+      <div class="control-banner">
         <div>
-          <h3 style="font-size: 14px; font-weight: 600;">Personal Reply Style Profile</h3>
-          <p id="style-summary" style="font-size: 12.5px; color: var(--text-muted); margin-top: 2px;">Loading style profile...</p>
+          <span style="font-weight: 600; color: var(--text);">Style Profile: </span>
+          <span id="style-summary" style="color: var(--text-muted);">Loading profile...</span>
         </div>
-        <button id="btn-learn-style" class="btn btn-secondary" onclick="learnStyle()">
-          ⚡ Learn / Refresh My Style
-        </button>
+        <button id="btn-learn-style" class="btn btn-secondary" onclick="learnStyle()">Re-analyze Sent Mail</button>
       </div>
 
       <div id="replies-list">
-        <div style="text-align: center; padding: 48px; color: var(--text-muted);">Loading smart reply suggestions...</div>
+        <div style="text-align: center; padding: 32px; color: var(--text-muted);">No pending smart replies.</div>
       </div>
     </div>
 
     <!-- Tab 3: Learned Rules -->
-    <div id="tab-rules" class="tab-content">
-      <div class="table-container">
+    <div id="pane-rules" class="tab-pane">
+      <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+        <input type="text" id="rules-filter" class="search-input" placeholder="Filter rules by domain or label..." oninput="filterRules()" style="width: 300px;">
+        <span id="rules-filter-count" style="font-size: 12px; color: var(--text-muted);"></span>
+      </div>
+      <div class="data-table-wrap">
         <table>
           <thead>
             <tr>
-              <th style="width: 22%;">Sender Domain</th>
-              <th style="width: 18%;">Target Label</th>
-              <th style="width: 25%;">Condition</th>
+              <th style="width: 22%;">Domain</th>
+              <th style="width: 15%;">Target Label</th>
+              <th style="width: 28%;">Condition</th>
               <th style="width: 35%;">Reasoning</th>
             </tr>
           </thead>
           <tbody id="rules-tbody">
-            <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading rules...</td></tr>
+            <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading rules...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
 
     <!-- Tab 4: Unmatched Queue -->
-    <div id="tab-unmatched" class="tab-content">
-      <div class="table-container">
+    <div id="pane-unmatched" class="tab-pane">
+      <div class="data-table-wrap">
         <table>
           <thead>
             <tr>
-              <th style="width: 25%;">Subject</th>
-              <th style="width: 20%;">Sender</th>
+              <th style="width: 28%;">Subject</th>
+              <th style="width: 22%;">Sender</th>
               <th style="width: 10%;">Confidence</th>
-              <th style="width: 45%;">Reasoning</th>
+              <th style="width: 40%;">Reasoning</th>
             </tr>
           </thead>
           <tbody id="unmatched-tbody">
-            <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading unmatched items...</td></tr>
+            <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading unmatched queue...</td></tr>
           </tbody>
         </table>
       </div>
@@ -545,7 +615,9 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
 
   <script>
     let autoscroll = true;
-    const terminalEl = document.getElementById('terminal-body');
+    let rawLogLines = [];
+    let cachedRules = [];
+    const terminalEl = document.getElementById('terminal-output');
     const autoScrollChk = document.getElementById('auto-scroll-chk');
 
     autoScrollChk.addEventListener('change', (e) => {
@@ -553,7 +625,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     });
 
     const formatLogLine = (text) => {
-      let colorClass = 'log-line';
+      let colorClass = 'log-row';
       if (text.includes('[SUCCESS]')) colorClass += ' log-success';
       else if (text.includes('[ERROR]')) colorClass += ' log-error';
       else if (text.includes('[WARN]')) colorClass += ' log-warn';
@@ -569,38 +641,53 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     };
 
     const appendLogToView = (text) => {
-      terminalEl.innerHTML += formatLogLine(text);
+      rawLogLines.push(text);
+      if (rawLogLines.length > 1000) rawLogLines.shift();
+
+      const filterVal = document.getElementById('log-filter').value.toLowerCase().trim();
+      if (!filterVal || text.toLowerCase().includes(filterVal)) {
+        terminalEl.innerHTML += formatLogLine(text);
+        if (autoscroll) {
+          terminalEl.scrollTop = terminalEl.scrollHeight;
+        }
+      }
+    };
+
+    const filterLogs = () => {
+      const filterVal = document.getElementById('log-filter').value.toLowerCase().trim();
+      terminalEl.innerHTML = rawLogLines
+        .filter(l => !filterVal || l.toLowerCase().includes(filterVal))
+        .map(formatLogLine)
+        .join('');
       if (autoscroll) {
         terminalEl.scrollTop = terminalEl.scrollHeight;
       }
     };
 
     const clearLogs = () => {
+      rawLogLines = [];
       terminalEl.innerHTML = '';
     };
 
     const switchTab = (tabName) => {
-      document.querySelectorAll('.tab').forEach((t, i) => {
+      document.querySelectorAll('.nav-tab').forEach((t, i) => {
         const isSelected = (tabName === 'logs' && i === 0) || (tabName === 'replies' && i === 1) || (tabName === 'rules' && i === 2) || (tabName === 'unmatched' && i === 3);
-        t.className = isSelected ? 'tab active' : 'tab';
+        t.className = isSelected ? 'nav-tab active' : 'nav-tab';
       });
-      document.querySelectorAll('.tab-content').forEach((tc) => tc.classList.remove('active'));
-      document.getElementById('tab-' + tabName).classList.add('active');
+      document.querySelectorAll('.tab-pane').forEach((tc) => tc.classList.remove('active'));
+      document.getElementById('pane-' + tabName).classList.add('active');
 
       if (tabName === 'replies') { loadReplies(); loadStyleProfile(); }
       if (tabName === 'rules') loadRules();
       if (tabName === 'unmatched') loadUnmatched();
     };
 
-    // Live Server-Sent Events (SSE) log stream
     const initLogStream = () => {
       const source = new EventSource('/api/logs/stream');
       source.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.log) {
-            appendLogToView(data.log);
-          }
+          if (data.log) appendLogToView(data.log);
         } catch {}
       };
       source.onerror = () => {
@@ -611,10 +698,9 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     const triggerRun = async () => {
       const btn = document.getElementById('btn-run');
       btn.disabled = true;
-      btn.innerHTML = 'Running...';
+      btn.textContent = 'Running...';
       document.getElementById('stat-status').textContent = 'Classifying';
-      document.getElementById('daemon-badge').className = 'badge badge-warning';
-      document.getElementById('daemon-badge').textContent = 'Classifying';
+      document.getElementById('status-dot').className = 'status-dot busy';
 
       try {
         const res = await fetch('/api/trigger-run', { method: 'POST' });
@@ -625,10 +711,9 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       } finally {
         setTimeout(() => {
           btn.disabled = false;
-          btn.innerHTML = '<svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Classify Now';
+          btn.textContent = 'Run Classification Pass';
           document.getElementById('stat-status').textContent = 'Idle';
-          document.getElementById('daemon-badge').className = 'badge badge-success';
-          document.getElementById('daemon-badge').textContent = 'Daemon Healthy';
+          document.getElementById('status-dot').className = 'status-dot';
         }, 3000);
       }
     };
@@ -650,19 +735,36 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       try {
         const res = await fetch('/api/rules');
         const data = await res.json();
-        const tbody = document.getElementById('rules-tbody');
-        document.getElementById('rule-count').textContent = data.rules?.length || 0;
-        if (!data.rules || data.rules.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No learned rules found</td></tr>';
-          return;
-        }
-        tbody.innerHTML = data.rules.map(r => '<tr>' +
-          '<td><code>' + (r.senderDomain || '-') + '</code></td>' +
-          '<td><span class="badge badge-info">' + (r.targetLabel || '-') + '</span></td>' +
-          '<td style="color: var(--text-muted);">' + (r.topicCondition || '-') + '</td>' +
-          '<td style="color: var(--text-muted);">' + (r.reasoning || '-') + '</td>' +
-          '</tr>').join('');
+        cachedRules = data.rules || [];
+        document.getElementById('rule-count').textContent = cachedRules.length;
+        renderRules(cachedRules);
       } catch {}
+    };
+
+    const renderRules = (rules) => {
+      const tbody = document.getElementById('rules-tbody');
+      document.getElementById('rules-filter-count').textContent = 'Showing ' + rules.length + ' rules';
+      if (rules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">No rules found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rules.map(r => '<tr>' +
+        '<td><code>' + (r.senderDomain || '-') + '</code></td>' +
+        '<td><span class="label-pill">' + (r.targetLabel || '-') + '</span></td>' +
+        '<td style="color: var(--text);">' + (r.topicCondition || '-') + '</td>' +
+        '<td style="color: var(--text-muted);">' + (r.reasoning || '-') + '</td>' +
+        '</tr>').join('');
+    };
+
+    const filterRules = () => {
+      const query = document.getElementById('rules-filter').value.toLowerCase().trim();
+      const filtered = cachedRules.filter(r => 
+        !query ||
+        (r.senderDomain && r.senderDomain.toLowerCase().includes(query)) ||
+        (r.targetLabel && r.targetLabel.toLowerCase().includes(query)) ||
+        (r.topicCondition && r.topicCondition.toLowerCase().includes(query))
+      );
+      renderRules(filtered);
     };
 
     const loadUnmatched = async () => {
@@ -670,15 +772,16 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
         const res = await fetch('/api/unmatched');
         const data = await res.json();
         const tbody = document.getElementById('unmatched-tbody');
-        document.getElementById('unmatched-count').textContent = data.unmatched?.length || 0;
-        if (!data.unmatched || data.unmatched.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Queue is empty</td></tr>';
+        const list = data.unmatched || [];
+        document.getElementById('unmatched-count').textContent = list.length;
+        if (list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Queue is empty</td></tr>';
           return;
         }
-        tbody.innerHTML = data.unmatched.map(u => '<tr>' +
+        tbody.innerHTML = list.map(u => '<tr>' +
           '<td><strong>' + (u.subject || 'No Subject') + '</strong></td>' +
-          '<td>' + (u.sender || 'Unknown') + '</td>' +
-          '<td><span class="badge badge-warning">' + (u.confidence || '0.00') + '</span></td>' +
+          '<td><code>' + (u.sender || 'Unknown') + '</code></td>' +
+          '<td><code>' + (u.confidence || '0.00') + '</code></td>' +
           '<td style="color: var(--text-muted);">' + (u.reasoning || '-') + '</td>' +
           '</tr>').join('');
       } catch {}
@@ -690,7 +793,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
         const data = await res.json();
         if (data.profile) {
           const p = data.profile;
-          document.getElementById('style-summary').innerHTML = 'Tone: <strong>' + (p.tone || 'Natural') + '</strong> | Sign-off: <code>' + (p.defaultSignoffs?.[0]?.replace(/\\n/g, ' ') || 'Thanks') + '</code> | ~' + (p.averageLengthWords || 40) + ' words';
+          document.getElementById('style-summary').innerHTML = '<strong>' + (p.tone || 'Direct') + '</strong> &bull; Avg ~' + (p.averageLengthWords || 40) + ' words';
         }
       } catch {}
     };
@@ -698,13 +801,13 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     const learnStyle = async () => {
       const btn = document.getElementById('btn-learn-style');
       btn.disabled = true;
-      btn.textContent = 'Analyzing Sent Mail...';
+      btn.textContent = 'Analyzing...';
       try {
         const res = await fetch('/api/learn-style', { method: 'POST' });
         const data = await res.json();
         if (data.ok) {
           loadStyleProfile();
-          alert('Personal style profile successfully analyzed and updated!');
+          appendLogToView('[SUCCESS] Style profile updated from sent emails.');
         } else {
           alert(data.error || 'Failed to learn style');
         }
@@ -712,7 +815,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
         alert('Error learning style profile');
       } finally {
         btn.disabled = false;
-        btn.textContent = '⚡ Learn / Refresh My Style';
+        btn.textContent = 'Re-analyze Sent Mail';
       }
     };
 
@@ -725,27 +828,26 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
         document.getElementById('reply-count').textContent = replies.length;
 
         if (replies.length === 0) {
-          listEl.innerHTML = '<div style="text-align: center; padding: 48px; color: var(--text-muted); background: var(--card); border: 1px solid var(--border); border-radius: 8px;">No pending smart replies. All actionable emails have been addressed! 🎉</div>';
+          listEl.innerHTML = '<div style="text-align: center; padding: 32px; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); border-radius: 6px;">No pending smart replies.</div>';
           return;
         }
 
-        listEl.innerHTML = replies.map(r => '<div class="reply-card" id="reply-card-' + r.id + '">' +
-          '<div class="reply-header">' +
+        listEl.innerHTML = replies.map(r => '<div class="reply-item" id="reply-card-' + r.id + '">' +
+          '<div class="reply-item-header">' +
             '<div>' +
-              '<h4 style="font-size: 15px; font-weight: 600; color: var(--text);">' + (r.subject || 'No Subject') + '</h4>' +
-              '<div style="font-size: 12.5px; color: var(--text-muted); margin-top: 2px;">From: <strong>' + (r.sender || 'Unknown') + '</strong> &bull; ' + (r.receivedAt || '') + '</div>' +
+              '<div class="reply-subject">' + (r.subject || 'No Subject') + '</div>' +
+              '<div class="reply-meta">From: <code>' + (r.sender || 'Unknown') + '</code> &bull; ' + (r.receivedAt || '') + '</div>' +
             '</div>' +
-            '<span class="badge badge-info">' + Math.round((r.confidence || 0) * 100) + '% match</span>' +
+            '<span class="meta-tag">' + Math.round((r.confidence || 0) * 100) + '% match</span>' +
           '</div>' +
-          '<div class="snippet-box">' + (r.originalSnippet || '') + '</div>' +
-          '<label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Suggested Draft (Editable):</label>' +
-          '<textarea id="draft-text-' + r.id + '" class="draft-textarea">' + (r.suggestedReply || '') + '</textarea>' +
-          '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+          '<div class="snippet-preview">' + (r.originalSnippet || '') + '</div>' +
+          '<textarea id="draft-text-' + r.id + '" class="editor-textarea">' + (r.suggestedReply || '') + '</textarea>' +
+          '<div class="reply-footer">' +
             '<div style="display: flex; gap: 8px;">' +
-              '<button class="btn" id="btn-save-' + r.id + '" onclick="saveDraft(\\'' + r.id + '\\')">📝 Save as Gmail Draft</button>' +
-              '<button class="btn btn-secondary" onclick="dismissReply(\\'' + r.id + '\\')">✕ Dismiss</button>' +
+              '<button class="btn" id="btn-save-' + r.id + '" onclick="saveDraft(\\'' + r.id + '\\')">Save as Gmail Draft</button>' +
+              '<button class="btn btn-secondary" onclick="dismissReply(\\'' + r.id + '\\')">Dismiss</button>' +
             '</div>' +
-            '<span style="font-size: 12px; color: var(--text-muted);">' + (r.reasoning || '') + '</span>' +
+            '<span style="font-size: 11.5px; color: var(--text-muted);">' + (r.reasoning || '') + '</span>' +
           '</div>' +
         '</div>').join('');
       } catch {}
@@ -755,7 +857,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       const btn = document.getElementById('btn-save-' + id);
       const text = document.getElementById('draft-text-' + id).value;
       btn.disabled = true;
-      btn.textContent = 'Saving to Gmail...';
+      btn.textContent = 'Saving...';
 
       try {
         const res = await fetch('/api/save-draft', {
@@ -766,20 +868,20 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
         const data = await res.json();
         if (data.ok) {
           btn.className = 'btn btn-secondary';
-          btn.innerHTML = '✓ Draft Saved in Gmail!';
+          btn.textContent = 'Saved to Gmail Drafts';
           setTimeout(() => {
             document.getElementById('reply-card-' + id)?.remove();
             loadReplies();
-          }, 1200);
+          }, 800);
         } else {
-          alert(data.error || 'Failed to save draft in Gmail');
+          alert(data.error || 'Failed to save draft');
           btn.disabled = false;
-          btn.textContent = '📝 Save as Gmail Draft';
+          btn.textContent = 'Save as Gmail Draft';
         }
       } catch (err) {
         alert('Network error saving draft');
         btn.disabled = false;
-        btn.textContent = '📝 Save as Gmail Draft';
+        btn.textContent = 'Save as Gmail Draft';
       }
     };
 
