@@ -600,9 +600,12 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
 
     <!-- Tab 3: Learned Rules -->
     <div id="pane-rules" class="tab-pane">
-      <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-        <input type="text" id="rules-filter" class="search-input" placeholder="Filter algorithmic rules by domain, regex, or label..." oninput="filterRules()" style="width: 360px;">
-        <span id="rules-filter-count" style="font-size: 12px; color: var(--text-muted);"></span>
+      <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" id="rules-filter" class="search-input" placeholder="Filter algorithmic rules by domain, regex, or label..." oninput="filterRules()" style="width: 360px;">
+          <span id="rules-filter-count" style="font-size: 12px; color: var(--text-muted);"></span>
+        </div>
+        <button id="btn-upgrade-rules" class="btn btn-secondary" onclick="upgradeRules()">Augment with Regex</button>
       </div>
       <div class="data-table-wrap">
         <table>
@@ -835,6 +838,27 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       renderRules(filtered);
     };
 
+    const upgradeRules = async () => {
+      const btn = document.getElementById('btn-upgrade-rules');
+      btn.disabled = true;
+      btn.textContent = 'Augmenting...';
+      try {
+        const res = await fetch('/api/rules/upgrade', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          loadRules();
+          appendLogToView('[SUCCESS] ' + (data.upgradedCount || 0) + ' rule(s) augmented with algorithmic regex patterns.');
+        } else {
+          alert(data.error || 'Failed to augment rules');
+        }
+      } catch (err) {
+        alert('Network error augmenting rules');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Augment with Regex';
+      }
+    };
+
     const loadUnmatched = async () => {
       try {
         const res = await fetch('/api/unmatched');
@@ -998,6 +1022,7 @@ export const startPersistentWebServer = (options: {
   port?: number;
   onTriggerRun?: () => Promise<void>;
   onTriggerTrain?: () => Promise<void>;
+  onUpgradeRules?: () => Promise<{ upgradedCount: number }>;
   onCullMemory?: () => Promise<void>;
   onLearnStyle?: () => Promise<LearnedStyleProfile>;
   onSaveDraft?: (options: { id: string; body: string }) => Promise<void>;
@@ -1247,6 +1272,20 @@ export const startPersistentWebServer = (options: {
           });
         }
         sendJson(res, 200, { ok: true, message: 'Training run triggered' });
+        return;
+      }
+
+      if (pathname === '/api/rules/upgrade' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        if (!options.onUpgradeRules) {
+          sendJson(res, 500, { error: 'Rule upgrade callback not configured' });
+          return;
+        }
+        const result = await options.onUpgradeRules();
+        sendJson(res, 200, { ok: true, upgradedCount: result.upgradedCount });
         return;
       }
 

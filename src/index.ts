@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
+import { LLMEngine, RuleManager, UnmatchedManager, upgradeLegacyRules } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
 import { distillStyleFromSentEmails, generateSmartReply, PendingRepliesManager, StyleProfileManager } from './smartReply.js';
 import { appendWebLog, startPersistentWebServer } from './webServer.js';
@@ -636,6 +636,17 @@ const main = async (): Promise<void> => {
         const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
         const gc = new GmailClient(auth);
         await runClassificationBatch(gc, freshConfig, { dryRun: false, trainingMode: true });
+      },
+      onUpgradeRules: async () => {
+        log.info('Starting manual rule augmentation with Big Model (gemma4:31b-cloud)...');
+        const freshConfig = loadConfig(values.config);
+        const rm = new RuleManager(freshConfig.classification.learnedRulesPath);
+        const upgradeModel = freshConfig.ollama.remoteModel ?? freshConfig.ollama.model;
+        const result = await upgradeLegacyRules(rm, freshConfig.ollama.host, upgradeModel, (msg) => {
+          log.info(`[Rule Upgrader] ${msg}`);
+        });
+        log.success(`Rule upgrade complete! ${result.upgradedCount} rule(s) augmented with deterministic regex.`);
+        return result;
       },
       onCullMemory: async () => {
         const llm = new LLMEngine({

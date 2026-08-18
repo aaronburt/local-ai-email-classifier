@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { Ollama } from 'ollama';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -285,10 +286,120 @@ export class RuleManager {
     return newRule;
   }
 
-  private saveRules(): void {
+  public saveRules(): void {
     writeFileSync(this.filePath, JSON.stringify(this.rules, null, 2), 'utf-8');
+    this.recompile();
   }
 }
+
+export const upgradeLegacyRules = async (
+  ruleManager: RuleManager,
+  ollamaHost: string,
+  modelName: string,
+  onProgress?: (msg: string) => void
+): Promise<{ upgradedCount: number }> => {
+  const client = new Ollama({ host: ollamaHost });
+  const allRules = ruleManager.getActiveRules();
+  const legacyRules = allRules.filter((r) => !r.subjectPattern && Boolean(r.topicCondition));
+
+  if (legacyRules.length === 0) {
+    return { upgradedCount: 0 };
+  }
+
+  onProgress?.(`Found ${legacyRules.length} rule(s) to augment with algorithmic regex patterns using "${modelName}"...`);
+
+  const UpgradeSchema = z.object({
+    upgrades: z.array(
+      z.object({
+        id: z.string(),
+        sender_regex: z.string().nullable().optional(),
+        subject_pattern: z.string(),
+        exclude_pattern: z.string().nullable().optional(),
+      })
+    ),
+  });
+
+  const jsonSchema = zodToJsonSchema(UpgradeSchema, 'RuleUpgrades');
+  const BATCH_SIZE = 10;
+  let totalUpgraded = 0;
+
+  for (let i = 0; i < legacyRules.length; i += BATCH_SIZE) {
+    const chunk = legacyRules.slice(i, i + BATCH_SIZE);
+    const prompt = `You are a regular expression compiler for an email classification engine.
+Your mission is to synthesize high-precision JavaScript regular expressions from human-readable topic conditions while PRESERVING the existing rule topics.
+
+RULES FOR REGEX SYNTHESIS:
+1. "subject_pattern": An invariant regex matching the subject template with wildcards for dates, amounts, and numbers (e.g. "^(?:Cron|vzdump|Account Verification)\\\\b.*" or ".*(?:statement|invoice|receipt).*").
+2. "sender_regex": Optional prefix/subaddress regex if specific to an address (e.g. "^(?:no-reply|billing|root)@").
+3. "exclude_pattern": Optional negative regex if promotions/newsletters must be rejected (e.g. "(?:deal|discount|newsletter)").
+4. Ensure valid regex syntax with proper double-escaping in JSON.
+
+RULES TO AUGMENT:
+${JSON.stringify(
+  chunk.map((r) => ({
+    id: r.id,
+    domain: r.senderDomain,
+    targetLabel: r.targetLabel,
+    topicCondition: r.topicCondition,
+    reasoning: r.reasoning,
+  })),
+  null,
+  2
+)}`;
+
+    try {
+      const response = await client.chat({
+        model: modelName,
+        messages: [
+          { role: 'system', content: 'Output valid JSON with synthesized regex patterns for each rule id.' },
+          { role: 'user', content: prompt },
+        ],
+        format: jsonSchema as Record<string, unknown>,
+        options: { temperature: 0.1 },
+      });
+
+      const parsed = parseJsonPayload(response.message.content) as {
+        upgrades: Array<{
+          id: string;
+          sender_regex?: string | null;
+          subject_pattern: string;
+          exclude_pattern?: string | null;
+        }>;
+      };
+
+      if (parsed.upgrades && Array.isArray(parsed.upgrades)) {
+        for (const item of parsed.upgrades) {
+          const rule = allRules.find((r) => r.id === item.id);
+          if (!rule || !item.subject_pattern) continue;
+
+          // Test regex validity
+          try {
+            new RegExp(item.subject_pattern, 'i');
+            if (item.sender_regex) new RegExp(item.sender_regex, 'i');
+            if (item.exclude_pattern) new RegExp(item.exclude_pattern, 'i');
+          } catch {
+            continue;
+          }
+
+          // Attach algorithmic fields while preserving topicCondition and reasoning
+          rule.subjectPattern = item.subject_pattern;
+          if (item.sender_regex) rule.senderRegex = item.sender_regex;
+          if (item.exclude_pattern) rule.excludePattern = item.exclude_pattern;
+          rule.lastMatchedAt = new Date().toISOString();
+          totalUpgraded += 1;
+        }
+      }
+
+      ruleManager.saveRules();
+      onProgress?.(`Processed ${Math.min(i + BATCH_SIZE, legacyRules.length)}/${legacyRules.length} rules (${totalUpgraded} augmented)...`);
+    } catch (err) {
+      onProgress?.(`Error augmenting batch: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  ruleManager.saveRules();
+  return { upgradedCount: totalUpgraded };
+};
 
 export class UnmatchedManager {
   private filePath: string;
