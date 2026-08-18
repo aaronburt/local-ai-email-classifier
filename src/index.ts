@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
+import { distillStyleFromSentEmails, generateSmartReply, PendingRepliesManager, StyleProfileManager } from './smartReply.js';
 import { appendWebLog, startPersistentWebServer } from './webServer.js';
 import type { AppConfig, ClassificationDecision, ClassificationResult, PartialAppConfig } from './types.js';
 
@@ -318,7 +319,12 @@ export const runClassificationBatch = async (
     return [];
   }
 
-const mapConcurrent = async <T, R>(
+  const styleProfilePath = resolveDataPath('learned_response.json', process.env['LEARNED_RESPONSE_PATH']);
+  const styleProfileManager = new StyleProfileManager(styleProfilePath);
+  const pendingRepliesPath = resolveDataPath('pending_replies.json', process.env['PENDING_REPLIES_PATH']);
+  const pendingRepliesManager = new PendingRepliesManager(pendingRepliesPath);
+
+  const mapConcurrent = async <T, R>(
   items: T[],
   limit: number,
   fn: (item: T, index: number) => Promise<R | undefined>
@@ -491,6 +497,39 @@ const mapConcurrent = async <T, R>(
         );
       }
 
+      if (
+        decision.isActionRequired &&
+        matchedLabel.name !== 'Advertisement' &&
+        matchedLabel.name !== 'System'
+      ) {
+        try {
+          const smartReplyModel = config.ollama.remoteModel ?? config.ollama.model;
+          const replyGen = await generateSmartReply(
+            parsedThread,
+            styleProfileManager.getProfile(),
+            config.ollama.host,
+            smartReplyModel
+          );
+          if (replyGen.should_reply && replyGen.suggested_reply_text.trim().length > 0) {
+            pendingRepliesManager.addPendingReply({
+              threadId,
+              messageId,
+              sender,
+              recipient: latestMessage?.recipient ?? '',
+              subject,
+              receivedAt: latestMessage?.date ?? new Date().toISOString(),
+              originalSnippet: parsedThread.fullConversationContext.slice(0, 300),
+              suggestedReply: replyGen.suggested_reply_text,
+              confidence: replyGen.confidence,
+              reasoning: replyGen.reasoning,
+            });
+            log.info(`[Smart Reply] Queued draft reply for "${subject}" (${replyGen.reasoning})`);
+          }
+        } catch (err) {
+          log.warn(`Smart reply generation skipped for "${subject}":`, err instanceof Error ? err.message : String(err));
+        }
+      }
+
       return decision;
     } catch (err) {
       log.error(`Failed to process message ${messageId}:`, err instanceof Error ? err.message : String(err));
@@ -592,6 +631,37 @@ const main = async (): Promise<void> => {
         });
         await llm.unloadModel();
         log.info('Memory culled: Ollama model unloaded from RAM.');
+      },
+      onLearnStyle: async () => {
+        log.info('Learning personal writing style from recent sent emails...');
+        const freshConfig = loadConfig(values.config);
+        const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
+        const gc = new GmailClient(auth);
+        const styleModel = freshConfig.ollama.remoteModel ?? freshConfig.ollama.model;
+        const profile = await distillStyleFromSentEmails(gc, freshConfig.ollama.host, styleModel, 50);
+        const styleManager = new StyleProfileManager(resolveDataPath('learned_response.json', process.env['LEARNED_RESPONSE_PATH']));
+        styleManager.saveProfile(profile);
+        log.success(`Style learning complete! Tone: "${profile.tone}". Saved to learned_response.json.`);
+        return profile;
+      },
+      onSaveDraft: async (opts) => {
+        log.info(`Saving smart reply draft in Gmail for "${opts.id}"...`);
+        const freshConfig = loadConfig(values.config);
+        const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
+        const gc = new GmailClient(auth);
+        const pendingManager = new PendingRepliesManager(resolveDataPath('pending_replies.json', process.env['PENDING_REPLIES_PATH']));
+        const item = pendingManager.getAllReplies().find((r) => r.id === opts.id || r.messageId === opts.id);
+        if (!item) {
+          throw new Error('Smart reply record not found');
+        }
+        await gc.createDraftReply({
+          threadId: item.threadId,
+          to: item.sender,
+          subject: item.subject,
+          body: opts.body,
+        });
+        pendingManager.markAsDrafted(item.id);
+        log.success(`Successfully saved draft reply to "${item.subject}" in your Gmail Drafts folder.`);
       },
     });
     return;

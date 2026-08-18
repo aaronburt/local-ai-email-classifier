@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { google } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
-import type { AppConfig, LearnedRule, UnmatchedEmailRecord } from './types.js';
+import type { AppConfig, LearnedRule, LearnedStyleProfile, PendingSmartReply, UnmatchedEmailRecord } from './types.js';
 
 const SCOPES = ['https://www.googleapis.com/auth/gmail.modify'];
 const MAX_LOG_LINES = 500;
@@ -346,6 +346,47 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     tr:last-child td { border-bottom: none; }
     tr:hover td { background-color: rgba(255, 255, 255, 0.02); }
     
+    .reply-card {
+      background-color: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .reply-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .snippet-box {
+      background-color: var(--card-alt);
+      border-left: 3px solid var(--primary);
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      border-radius: 0 4px 4px 0;
+    }
+    .draft-textarea {
+      width: 100%;
+      min-height: 120px;
+      background-color: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13.5px;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+      margin-bottom: 14px;
+    }
+    .draft-textarea:focus {
+      border-color: var(--primary);
+    }
+
     #auth-overlay {
       position: fixed;
       inset: 0;
@@ -424,6 +465,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
 
   <div class="nav-tabs">
     <div class="tab active" onclick="switchTab('logs')">Live Logs</div>
+    <div class="tab" onclick="switchTab('replies')">💬 Smart Replies (<span id="reply-count">-</span>)</div>
     <div class="tab" onclick="switchTab('rules')">Learned Rules (<span id="rule-count">-</span>)</div>
     <div class="tab" onclick="switchTab('unmatched')">Unmatched Queue (<span id="unmatched-count">-</span>)</div>
   </div>
@@ -445,7 +487,24 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       </div>
     </div>
 
-    <!-- Tab 2: Learned Rules -->
+    <!-- Tab 2: Smart Replies -->
+    <div id="tab-replies" class="tab-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: var(--card); padding: 14px 20px; border-radius: 8px; border: 1px solid var(--border);">
+        <div>
+          <h3 style="font-size: 14px; font-weight: 600;">Personal Reply Style Profile</h3>
+          <p id="style-summary" style="font-size: 12.5px; color: var(--text-muted); margin-top: 2px;">Loading style profile...</p>
+        </div>
+        <button id="btn-learn-style" class="btn btn-secondary" onclick="learnStyle()">
+          ⚡ Learn / Refresh My Style
+        </button>
+      </div>
+
+      <div id="replies-list">
+        <div style="text-align: center; padding: 48px; color: var(--text-muted);">Loading smart reply suggestions...</div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Learned Rules -->
     <div id="tab-rules" class="tab-content">
       <div class="table-container">
         <table>
@@ -464,7 +523,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       </div>
     </div>
 
-    <!-- Tab 3: Unmatched Queue -->
+    <!-- Tab 4: Unmatched Queue -->
     <div id="tab-unmatched" class="tab-content">
       <div class="table-container">
         <table>
@@ -522,12 +581,13 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
 
     const switchTab = (tabName) => {
       document.querySelectorAll('.tab').forEach((t, i) => {
-        const isSelected = (tabName === 'logs' && i === 0) || (tabName === 'rules' && i === 1) || (tabName === 'unmatched' && i === 2);
+        const isSelected = (tabName === 'logs' && i === 0) || (tabName === 'replies' && i === 1) || (tabName === 'rules' && i === 2) || (tabName === 'unmatched' && i === 3);
         t.className = isSelected ? 'tab active' : 'tab';
       });
       document.querySelectorAll('.tab-content').forEach((tc) => tc.classList.remove('active'));
       document.getElementById('tab-' + tabName).classList.add('active');
 
+      if (tabName === 'replies') { loadReplies(); loadStyleProfile(); }
       if (tabName === 'rules') loadRules();
       if (tabName === 'unmatched') loadUnmatched();
     };
@@ -624,6 +684,117 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       } catch {}
     };
 
+    const loadStyleProfile = async () => {
+      try {
+        const res = await fetch('/api/style-profile');
+        const data = await res.json();
+        if (data.profile) {
+          const p = data.profile;
+          document.getElementById('style-summary').innerHTML = 'Tone: <strong>' + (p.tone || 'Natural') + '</strong> | Sign-off: <code>' + (p.defaultSignoffs?.[0]?.replace(/\\n/g, ' ') || 'Thanks') + '</code> | ~' + (p.averageLengthWords || 40) + ' words';
+        }
+      } catch {}
+    };
+
+    const learnStyle = async () => {
+      const btn = document.getElementById('btn-learn-style');
+      btn.disabled = true;
+      btn.textContent = 'Analyzing Sent Mail...';
+      try {
+        const res = await fetch('/api/learn-style', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          loadStyleProfile();
+          alert('Personal style profile successfully analyzed and updated!');
+        } else {
+          alert(data.error || 'Failed to learn style');
+        }
+      } catch (err) {
+        alert('Error learning style profile');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Learn / Refresh My Style';
+      }
+    };
+
+    const loadReplies = async () => {
+      try {
+        const res = await fetch('/api/smart-replies');
+        const data = await res.json();
+        const listEl = document.getElementById('replies-list');
+        const replies = data.replies || [];
+        document.getElementById('reply-count').textContent = replies.length;
+
+        if (replies.length === 0) {
+          listEl.innerHTML = '<div style="text-align: center; padding: 48px; color: var(--text-muted); background: var(--card); border: 1px solid var(--border); border-radius: 8px;">No pending smart replies. All actionable emails have been addressed! 🎉</div>';
+          return;
+        }
+
+        listEl.innerHTML = replies.map(r => '<div class="reply-card" id="reply-card-' + r.id + '">' +
+          '<div class="reply-header">' +
+            '<div>' +
+              '<h4 style="font-size: 15px; font-weight: 600; color: var(--text);">' + (r.subject || 'No Subject') + '</h4>' +
+              '<div style="font-size: 12.5px; color: var(--text-muted); margin-top: 2px;">From: <strong>' + (r.sender || 'Unknown') + '</strong> &bull; ' + (r.receivedAt || '') + '</div>' +
+            '</div>' +
+            '<span class="badge badge-info">' + Math.round((r.confidence || 0) * 100) + '% match</span>' +
+          '</div>' +
+          '<div class="snippet-box">' + (r.originalSnippet || '') + '</div>' +
+          '<label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Suggested Draft (Editable):</label>' +
+          '<textarea id="draft-text-' + r.id + '" class="draft-textarea">' + (r.suggestedReply || '') + '</textarea>' +
+          '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+            '<div style="display: flex; gap: 8px;">' +
+              '<button class="btn" id="btn-save-' + r.id + '" onclick="saveDraft(\\'' + r.id + '\\')">📝 Save as Gmail Draft</button>' +
+              '<button class="btn btn-secondary" onclick="dismissReply(\\'' + r.id + '\\')">✕ Dismiss</button>' +
+            '</div>' +
+            '<span style="font-size: 12px; color: var(--text-muted);">' + (r.reasoning || '') + '</span>' +
+          '</div>' +
+        '</div>').join('');
+      } catch {}
+    };
+
+    const saveDraft = async (id) => {
+      const btn = document.getElementById('btn-save-' + id);
+      const text = document.getElementById('draft-text-' + id).value;
+      btn.disabled = true;
+      btn.textContent = 'Saving to Gmail...';
+
+      try {
+        const res = await fetch('/api/save-draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, body: text })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          btn.className = 'btn btn-secondary';
+          btn.innerHTML = '✓ Draft Saved in Gmail!';
+          setTimeout(() => {
+            document.getElementById('reply-card-' + id)?.remove();
+            loadReplies();
+          }, 1200);
+        } else {
+          alert(data.error || 'Failed to save draft in Gmail');
+          btn.disabled = false;
+          btn.textContent = '📝 Save as Gmail Draft';
+        }
+      } catch (err) {
+        alert('Network error saving draft');
+        btn.disabled = false;
+        btn.textContent = '📝 Save as Gmail Draft';
+      }
+    };
+
+    const dismissReply = async (id) => {
+      try {
+        await fetch('/api/dismiss-reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        document.getElementById('reply-card-' + id)?.remove();
+        loadReplies();
+      } catch {}
+    };
+
     const submitAuth = async () => {
       const input = document.getElementById('auth-pwd-input').value;
       try {
@@ -645,6 +816,7 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     };
 
     initLogStream();
+    loadReplies();
     loadRules();
     loadUnmatched();
   </script>
@@ -656,6 +828,8 @@ export const startPersistentWebServer = (options: {
   port?: number;
   onTriggerRun?: () => Promise<void>;
   onCullMemory?: () => Promise<void>;
+  onLearnStyle?: () => Promise<LearnedStyleProfile>;
+  onSaveDraft?: (options: { id: string; body: string }) => Promise<void>;
 }): http.Server => {
   const port = options.port ?? options.config.gmail.oauthPort ?? 3000;
   const config = options.config;
@@ -731,6 +905,128 @@ export const startPersistentWebServer = (options: {
           uptimeSeconds: Math.round(process.uptime()),
           requiresPassword: Boolean(process.env['WEB_PASSWORD']),
         });
+        return;
+      }
+
+const resolveDataPath = (fileName: string, explicitPath?: string): string => {
+  const targetName = explicitPath ?? fileName;
+  if (targetName.startsWith('/') || /^[a-zA-Z]:/.test(targetName)) {
+    return targetName;
+  }
+  const dataSubpath = `${process.cwd()}/data/${targetName}`;
+  if (existsSync(dataSubpath)) {
+    return dataSubpath;
+  }
+  const rootPath = `${process.cwd()}/${targetName}`;
+  if (existsSync(rootPath)) {
+    return rootPath;
+  }
+  if (existsSync(`${process.cwd()}/data`)) {
+    return dataSubpath;
+  }
+  return rootPath;
+};
+
+      if (pathname === '/api/smart-replies' && req.method === 'GET') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const pendingPath = resolveDataPath('pending_replies.json', process.env['PENDING_REPLIES_PATH']);
+        let replies: PendingSmartReply[] = [];
+        if (existsSync(pendingPath)) {
+          try {
+            const all = JSON.parse(readFileSync(pendingPath, 'utf-8')) as PendingSmartReply[];
+            replies = all.filter((r) => r.status === 'pending');
+          } catch {}
+        }
+        sendJson(res, 200, { replies });
+        return;
+      }
+
+      if (pathname === '/api/style-profile' && req.method === 'GET') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const stylePath = resolveDataPath('learned_response.json', process.env['LEARNED_RESPONSE_PATH']);
+        let profile = null;
+        if (existsSync(stylePath)) {
+          try {
+            profile = JSON.parse(readFileSync(stylePath, 'utf-8'));
+          } catch {}
+        }
+        sendJson(res, 200, { profile });
+        return;
+      }
+
+      if (pathname === '/api/learn-style' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        if (!options.onLearnStyle) {
+          sendJson(res, 500, { error: 'Style learning callback not configured' });
+          return;
+        }
+        const profile = await options.onLearnStyle();
+        sendJson(res, 200, { ok: true, profile });
+        return;
+      }
+
+      if (pathname === '/api/save-draft' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const replyId = String(body['id'] ?? '');
+        const draftBody = String(body['body'] ?? '');
+
+        if (!replyId || !draftBody) {
+          sendJson(res, 400, { error: 'Missing reply ID or draft body' });
+          return;
+        }
+
+        if (options.onSaveDraft) {
+          await options.onSaveDraft({ id: replyId, body: draftBody });
+        }
+
+        const pendingPath = resolveDataPath('pending_replies.json', process.env['PENDING_REPLIES_PATH']);
+        if (existsSync(pendingPath)) {
+          try {
+            const all = JSON.parse(readFileSync(pendingPath, 'utf-8')) as PendingSmartReply[];
+            const item = all.find((r) => r.id === replyId);
+            if (item) {
+              item.status = 'drafted';
+              writeFileSync(pendingPath, JSON.stringify(all, null, 2), 'utf-8');
+            }
+          } catch {}
+        }
+
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (pathname === '/api/dismiss-reply' && req.method === 'POST') {
+        if (!isAuthorized(req)) {
+          sendJson(res, 401, { error: 'Unauthorized' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const replyId = String(body['id'] ?? '');
+        const pendingPath = resolveDataPath('pending_replies.json', process.env['PENDING_REPLIES_PATH']);
+        if (existsSync(pendingPath)) {
+          try {
+            const all = JSON.parse(readFileSync(pendingPath, 'utf-8')) as PendingSmartReply[];
+            const item = all.find((r) => r.id === replyId);
+            if (item) {
+              item.status = 'dismissed';
+              writeFileSync(pendingPath, JSON.stringify(all, null, 2), 'utf-8');
+            }
+          } catch {}
+        }
+        sendJson(res, 200, { ok: true });
         return;
       }
 

@@ -165,3 +165,45 @@ export interface UnmatchedEmailRecord {
   reasoning: string;
   unmatchedAt: string;
 }
+
+export const StyleProfileSchema = z.object({
+  tone: z.string(),
+  defaultGreetings: z.array(z.string()),
+  defaultSignoffs: z.array(z.string()),
+  averageLengthWords: z.number(),
+  styleGuidelines: z.array(z.string()),
+  learnedTemplates: z.array(
+    z.object({
+      trigger: z.string(),
+      responseOutline: z.string(),
+    })
+  ),
+  updatedAt: z.string(),
+});
+
+export type LearnedStyleProfile = z.infer<typeof StyleProfileSchema>;
+
+export const SmartReplyGenerationSchema = z.object({
+  should_reply: z.boolean(),
+  reasoning: z.string(),
+  suggested_reply_text: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+
+export type SmartReplyGeneration = z.infer<typeof SmartReplyGenerationSchema>;
+
+export interface PendingSmartReply {
+  id: string;
+  threadId: string;
+  messageId: string;
+  sender: string;
+  recipient: string;
+  subject: string;
+  receivedAt: string;
+  originalSnippet: string;
+  suggestedReply: string;
+  confidence: number;
+  reasoning: string;
+  createdAt: string;
+  status: 'pending' | 'drafted' | 'dismissed';
+}

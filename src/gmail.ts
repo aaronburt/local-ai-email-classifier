@@ -263,6 +263,56 @@ export class GmailClient {
     });
   }
 
+  async listSentMessages(maxResults = 50): Promise<gmail_v1.Schema$Message[]> {
+    const messageIds = await this.listUnlabeledMessageIds('in:sent -in:drafts', maxResults);
+    const messages: gmail_v1.Schema$Message[] = [];
+    for (const id of messageIds) {
+      try {
+        const msg = await this.getMessage(id);
+        messages.push(msg);
+      } catch {}
+    }
+    return messages;
+  }
+
+  async createDraftReply(options: {
+    threadId: string;
+    to: string;
+    subject: string;
+    body: string;
+    inReplyToMessageId?: string;
+  }): Promise<gmail_v1.Schema$Draft> {
+    return withBackoff(async () => {
+      const cleanSubject = options.subject.startsWith('Re:') ? options.subject : `Re: ${options.subject}`;
+      const headers = [
+        `To: ${options.to}`,
+        `Subject: ${cleanSubject}`,
+        'Content-Type: text/plain; charset=utf-8',
+        'MIME-Version: 1.0',
+      ];
+
+      if (options.inReplyToMessageId) {
+        headers.push(`In-Reply-To: ${options.inReplyToMessageId}`);
+        headers.push(`References: ${options.inReplyToMessageId}`);
+      }
+
+      const rawEmail = `${headers.join('\r\n')}\r\n\r\n${options.body}`;
+      const encodedMessage = Buffer.from(rawEmail, 'utf-8').toString('base64url');
+
+      const response = await this.gmail.users.drafts.create({
+        userId: 'me',
+        requestBody: {
+          message: {
+            threadId: options.threadId,
+            raw: encodedMessage,
+          },
+        },
+      });
+
+      return response.data;
+    });
+  }
+
   async listAllMessageIds(query: string): Promise<string[]> {
     const allIds: string[] = [];
     let pageToken: string | undefined;
