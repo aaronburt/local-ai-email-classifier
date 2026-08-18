@@ -90,18 +90,14 @@ To deploy directly with **Dockge** on Proxmox LXC using the pre-built GHCR image
 
 1. Create a stack directory on your LXC container (e.g. `/opt/stacks/email-classifier`):
    ```bash
-   mkdir -p /opt/stacks/email-classifier
+   mkdir -p /opt/stacks/email-classifier/data
    cd /opt/stacks/email-classifier
    ```
 
-2. Copy your runtime configuration files:
-   - `config.json`
-   - `credentials.json`
-   - `token.json`
-   - Create initial tracking files:
-     ```bash
-     touch learned_rules.json unmatched.json history.csv
-     ```
+2. Copy your credentials into `./data`:
+   - `data/credentials.json`
+   - `data/token.json`
+   - `data/config.json` (optional, defaults to built-in configuration)
 
 3. Configure your `compose.yaml` in Dockge:
 
@@ -112,22 +108,16 @@ services:
     container_name: local-ai-email-classifier
     restart: unless-stopped
     environment:
-      - EMBEDDED_OLLAMA=false # Set to true to run Ollama inside this container
+      - EMBEDDED_OLLAMA=false # Set to true to run Ollama inside this container on CPU
       - OLLAMA_HOST=http://192.168.1.X:11434 # External Ollama IP if EMBEDDED_OLLAMA=false
       - OLLAMA_MODEL=phi4-mini
       - OLLAMA_REMOTE=gemma4:31b-cloud
       - CRON_SCHEDULE=*/5 * * * *
     volumes:
-      - ./config.json:/app/config.json
-      - ./credentials.json:/app/credentials.json
-      - ./token.json:/app/token.json
-      - ./learned_rules.json:/app/learned_rules.json
-      - ./unmatched.json:/app/unmatched.json
-      - ./history.csv:/app/history.csv
-      - ./ollama_data:/root/.ollama
+      - ./data:/app/data
 ```
 
-4. Click **Deploy** in Dockge.
+4. Click **Deploy** in Dockge. All tracking files (`learned_rules.json`, `unmatched.json`, `history.csv`, and embedded models) are automatically created and persisted inside `./data`.
 
 ---
 

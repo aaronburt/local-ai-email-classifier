@@ -19,6 +19,9 @@ cleanup() {
 trap cleanup TERM INT
 
 if [ "$EMBEDDED_OLLAMA" = "true" ] || [ "$EMBEDDED_OLLAMA" = "1" ]; then
+  mkdir -p /app/data/models
+  export OLLAMA_MODELS="/app/data/models"
+
   if ! command -v ollama >/dev/null 2>&1; then
     echo "[INFO] Installing Ollama standalone bundle..."
     curl -fsSL https://ollama.com/install.sh | OLLAMA_NO_START=1 sh

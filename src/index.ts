@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
@@ -26,26 +26,26 @@ const updateHeartbeat = (status: 'healthy' | 'shutting_down' | 'idle', details?:
     };
     writeFileSync(heartbeatPath, JSON.stringify(payload, null, 2), 'utf-8');
   } catch {
-    // Non-fatal if heartbeat cannot write
+    // Heartbeat write failure
   }
 };
 
-const registerSignalHandlers = (llmEngineRef?: { current?: LLMEngine }) => {
-  const handleSignal = (signal: string) => {
+const registerSignalHandlers = (engineRef?: { current?: LLMEngine }): void => {
+  const handleSignal = async (signal: string) => {
     if (isShuttingDown) return;
-    log.warn(`${signal} received. Finishing in-flight operation and shutting down cleanly...`);
     isShuttingDown = true;
+    log.info(`Received ${signal}, commencing graceful shutdown...`);
     updateHeartbeat('shutting_down');
 
-    const forceKillTimer = setTimeout(() => {
-      log.error('Shutdown timed out after 30 seconds. Forcing process exit.');
-      process.exit(1);
-    }, 30000);
-    forceKillTimer.unref();
-
-    if (llmEngineRef?.current) {
-      llmEngineRef.current.unloadModel().catch(() => {});
+    if (engineRef?.current) {
+      try {
+        await engineRef.current.unloadModel();
+      } catch {
+        // Model unload during shutdown
+      }
     }
+
+    process.exit(0);
   };
 
   process.on('SIGTERM', () => handleSignal('SIGTERM'));
@@ -71,6 +71,26 @@ const parseEnvArray = (key: string, fallback: string[]): string[] => {
   return val.split(',').map((item) => item.trim()).filter(Boolean);
 };
 
+export const resolveDataPath = (fileName: string, explicitPath?: string): string => {
+  const targetName = explicitPath ?? fileName;
+  if (isAbsolute(targetName)) {
+    return targetName;
+  }
+  const dataSubpath = resolve(process.cwd(), 'data', targetName);
+  if (existsSync(dataSubpath)) {
+    return dataSubpath;
+  }
+  const rootPath = resolve(process.cwd(), targetName);
+  if (existsSync(rootPath)) {
+    return rootPath;
+  }
+  const dataDir = resolve(process.cwd(), 'data');
+  if (existsSync(dataDir)) {
+    return dataSubpath;
+  }
+  return rootPath;
+};
+
 const DEFAULT_CONFIG: AppConfig = {
   ollama: {
     host: process.env['OLLAMA_HOST'] ?? 'http://127.0.0.1:11434',
@@ -83,8 +103,8 @@ const DEFAULT_CONFIG: AppConfig = {
     cloudModel: process.env['OLLAMA_REMOTE'] ?? process.env['OLLAMA_REMOTE_MODEL'] ?? process.env['OLLAMA_CLOUD_MODEL'] ?? 'gemma4:31b-cloud',
   },
   gmail: {
-    credentialsPath: process.env['GMAIL_CREDENTIALS_PATH'] ?? resolve(process.cwd(), 'credentials.json'),
-    tokenPath: process.env['GMAIL_TOKEN_PATH'] ?? resolve(process.cwd(), 'token.json'),
+    credentialsPath: resolveDataPath('credentials.json', process.env['GMAIL_CREDENTIALS_PATH']),
+    tokenPath: resolveDataPath('token.json', process.env['GMAIL_TOKEN_PATH']),
     searchQuery: process.env['GMAIL_SEARCH_QUERY'] ?? 'has:nouserlabels in:inbox',
     fallbackLabelName: process.env['GMAIL_FALLBACK_LABEL'] ?? 'Other',
     batchSize: parseEnvNumber('GMAIL_BATCH_SIZE', 10),
@@ -100,9 +120,9 @@ const DEFAULT_CONFIG: AppConfig = {
   classification: {
     minConfidenceThreshold: parseEnvNumber('MIN_CONFIDENCE_THRESHOLD', 0.7),
     escalationThreshold: parseEnvNumber('ESCALATION_THRESHOLD', 0.95),
-    learnedRulesPath: process.env['LEARNED_RULES_PATH'] ?? resolve(process.cwd(), 'learned_rules.json'),
-    unmatchedPath: process.env['UNMATCHED_PATH'] ?? resolve(process.cwd(), 'unmatched.json'),
-    historyPath: process.env['HISTORY_PATH'] ?? resolve(process.cwd(), 'history.csv'),
+    learnedRulesPath: resolveDataPath('learned_rules.json', process.env['LEARNED_RULES_PATH']),
+    unmatchedPath: resolveDataPath('unmatched.json', process.env['UNMATCHED_PATH']),
+    historyPath: resolveDataPath('history.csv', process.env['HISTORY_PATH']),
     labelHints: {},
   },
   prompts: {
@@ -114,7 +134,10 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export const loadConfig = (customPath?: string): AppConfig => {
-  const configPath = resolve(process.cwd(), customPath ?? 'config.json');
+  const configPath = customPath
+    ? resolve(process.cwd(), customPath)
+    : resolveDataPath('config.json');
+
   if (!existsSync(configPath)) return DEFAULT_CONFIG;
 
   try {
@@ -147,8 +170,8 @@ export const loadConfig = (customPath?: string): AppConfig => {
       gmail: {
         ...DEFAULT_CONFIG.gmail,
         ...parsed.gmail,
-        credentialsPath: process.env['GMAIL_CREDENTIALS_PATH'] ?? parsed.gmail?.credentialsPath ?? DEFAULT_CONFIG.gmail.credentialsPath,
-        tokenPath: process.env['GMAIL_TOKEN_PATH'] ?? parsed.gmail?.tokenPath ?? DEFAULT_CONFIG.gmail.tokenPath,
+        credentialsPath: resolveDataPath('credentials.json', process.env['GMAIL_CREDENTIALS_PATH'] ?? parsed.gmail?.credentialsPath),
+        tokenPath: resolveDataPath('token.json', process.env['GMAIL_TOKEN_PATH'] ?? parsed.gmail?.tokenPath),
         searchQuery: process.env['GMAIL_SEARCH_QUERY'] ?? parsed.gmail?.searchQuery ?? DEFAULT_CONFIG.gmail.searchQuery,
         fallbackLabelName: process.env['GMAIL_FALLBACK_LABEL'] ?? parsed.gmail?.fallbackLabelName ?? DEFAULT_CONFIG.gmail.fallbackLabelName,
         batchSize: parseEnvNumber('GMAIL_BATCH_SIZE', parsed.gmail?.batchSize ?? DEFAULT_CONFIG.gmail.batchSize),
@@ -166,21 +189,9 @@ export const loadConfig = (customPath?: string): AppConfig => {
         ...parsed.classification,
         minConfidenceThreshold: parseEnvNumber('MIN_CONFIDENCE_THRESHOLD', parsed.classification?.minConfidenceThreshold ?? DEFAULT_CONFIG.classification.minConfidenceThreshold),
         escalationThreshold: parseEnvNumber('ESCALATION_THRESHOLD', parsed.classification?.escalationThreshold ?? DEFAULT_CONFIG.classification.escalationThreshold),
-        learnedRulesPath: process.env['LEARNED_RULES_PATH']
-          ? resolve(process.cwd(), process.env['LEARNED_RULES_PATH'])
-          : parsed.classification?.learnedRulesPath
-          ? resolve(process.cwd(), parsed.classification.learnedRulesPath)
-          : DEFAULT_CONFIG.classification.learnedRulesPath,
-        unmatchedPath: process.env['UNMATCHED_PATH']
-          ? resolve(process.cwd(), process.env['UNMATCHED_PATH'])
-          : parsed.classification?.unmatchedPath
-          ? resolve(process.cwd(), parsed.classification.unmatchedPath)
-          : DEFAULT_CONFIG.classification.unmatchedPath,
-        historyPath: process.env['HISTORY_PATH']
-          ? resolve(process.cwd(), process.env['HISTORY_PATH'])
-          : parsed.classification?.historyPath
-          ? resolve(process.cwd(), parsed.classification.historyPath)
-          : DEFAULT_CONFIG.classification.historyPath,
+        learnedRulesPath: resolveDataPath('learned_rules.json', process.env['LEARNED_RULES_PATH'] ?? parsed.classification?.learnedRulesPath),
+        unmatchedPath: resolveDataPath('unmatched.json', process.env['UNMATCHED_PATH'] ?? parsed.classification?.unmatchedPath),
+        historyPath: resolveDataPath('history.csv', process.env['HISTORY_PATH'] ?? parsed.classification?.historyPath),
       },
       prompts: {
         classificationSystem: process.env['PROMPT_CLASSIFICATION_SYSTEM'] ?? parsed.prompts?.classificationSystem,

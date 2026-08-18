@@ -18,13 +18,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./config.json:/app/config.json
-      - ./credentials.json:/app/credentials.json
-      - ./token.json:/app/token.json
-      - ./learned_rules.json:/app/learned_rules.json
-      - ./unmatched.json:/app/unmatched.json
-      - ./history.csv:/app/history.csv
-      - ./ollama_data:/root/.ollama
+      - ./data:/app/data
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/node -e 'const fs=require(\"fs\"); const file=\"/tmp/heartbeat.json\"; if (!fs.existsSync(file) || Date.now()-fs.statSync(file).mtimeMs > 10*60*1000) process.exit(1);'"]
       interval: 2m
