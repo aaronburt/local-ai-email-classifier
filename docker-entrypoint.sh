@@ -1,10 +1,13 @@
 #!/bin/sh
 set -e
 
-OLLAMA_PID=""
+SERVER_PID=""
 CRON_PID=""
 
 cleanup() {
+  if [ -n "$SERVER_PID" ]; then
+    kill -TERM "$SERVER_PID" 2>/dev/null || true
+  fi
   if [ -n "$OLLAMA_PID" ]; then
     kill -TERM "$OLLAMA_PID" 2>/dev/null || true
     wait "$OLLAMA_PID" 2>/dev/null || true
@@ -65,10 +68,14 @@ if [ "$1" = "cron" ] || [ "$1" = "--daemon" ] || [ -z "$1" ]; then
     echo "$CRON_EXPR . /app/.cronenv; cd /app && /usr/local/bin/node dist/index.js --once > /proc/1/fd/1 2> /proc/1/fd/2"
   ) | crontab -
 
+  echo "[INFO] Starting persistent Web Dashboard server on port 3000..."
+  /usr/local/bin/node dist/index.js --server &
+  SERVER_PID=$!
+
   echo "[INFO] Starting initial classification pass on startup..."
   /usr/local/bin/node dist/index.js --once || true
 
-  echo "[INFO] Cron active. Waiting for scheduled ticks..."
+  echo "[INFO] Cron & Web UI active. Waiting for scheduled ticks..."
   cron -f &
   CRON_PID=$!
   wait "$CRON_PID"

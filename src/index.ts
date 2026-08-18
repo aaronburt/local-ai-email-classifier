@@ -3,16 +3,32 @@ import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { LLMEngine, RuleManager, UnmatchedManager } from './classifier.js';
 import { getAuthenticatedClient, GmailClient, parseThread } from './gmail.js';
-import { startSetupWizard } from './setupServer.js';
+import { appendWebLog, startPersistentWebServer } from './webServer.js';
 import type { AppConfig, ClassificationDecision, ClassificationResult, PartialAppConfig } from './types.js';
 
 let isShuttingDown = false;
 
 const log = {
-  info: (msg: string, ...args: unknown[]) => process.stdout.write(`\x1b[36m[INFO]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`),
-  warn: (msg: string, ...args: unknown[]) => process.stderr.write(`\x1b[33m[WARN]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`),
-  error: (msg: string, ...args: unknown[]) => process.stderr.write(`\x1b[31m[ERROR]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`),
-  success: (msg: string, ...args: unknown[]) => process.stdout.write(`\x1b[32;1m[SUCCESS]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`),
+  info: (msg: string, ...args: unknown[]) => {
+    const formatted = `[INFO] ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}`;
+    process.stdout.write(`\x1b[36m[INFO]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`);
+    appendWebLog(formatted);
+  },
+  warn: (msg: string, ...args: unknown[]) => {
+    const formatted = `[WARN] ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}`;
+    process.stderr.write(`\x1b[33m[WARN]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`);
+    appendWebLog(formatted);
+  },
+  error: (msg: string, ...args: unknown[]) => {
+    const formatted = `[ERROR] ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}`;
+    process.stderr.write(`\x1b[31m[ERROR]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`);
+    appendWebLog(formatted);
+  },
+  success: (msg: string, ...args: unknown[]) => {
+    const formatted = `[SUCCESS] ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}`;
+    process.stdout.write(`\x1b[32;1m[SUCCESS]\x1b[0m ${new Date().toISOString()} - ${msg}${args.length ? ' ' + args.join(' ') : ''}\n`);
+    appendWebLog(formatted);
+  },
 };
 
 const updateHeartbeat = (status: 'healthy' | 'shutting_down' | 'idle', details?: Record<string, unknown>): void => {
@@ -521,6 +537,7 @@ const { values } = parseArgs({
     'dry-run': { type: 'boolean' },
     train: { type: 'boolean', short: 't' },
     once: { type: 'boolean' },
+    server: { type: 'boolean', short: 's' },
     help: { type: 'boolean', short: 'h' },
   },
   strict: true,
@@ -537,6 +554,7 @@ Options:
   -t, --train             Run in training mode (escalates any confidence < 1.0 to remote model to distill rules)
   --dry-run               Simulate classification without modifying Gmail labels
   --once                  Run a single classification pass and exit
+  -s, --server            Run persistent Web UI dashboard only
   -h, --help              Show help information
 `);
   process.exit(0);
@@ -545,14 +563,38 @@ Options:
 const main = async (): Promise<void> => {
   registerSignalHandlers();
   updateHeartbeat('healthy', { status: 'starting' });
-  let config = loadConfig(values.config);
+  const config = loadConfig(values.config);
   const limit = values.limit ? parseInt(values.limit, 10) : undefined;
   const isDryRun = Boolean(values['dry-run']);
   const isTraining = Boolean(values.train);
+  const isServerOnly = Boolean(values.server);
 
-  if (!existsSync(config.gmail.credentialsPath) || !existsSync(config.gmail.tokenPath)) {
-    await startSetupWizard(config, config.gmail.oauthPort);
-    config = loadConfig(values.config);
+  if (isServerOnly) {
+    log.info(`Starting persistent Web UI dashboard on port ${config.gmail.oauthPort ?? 3000}...`);
+    startPersistentWebServer({
+      config,
+      port: config.gmail.oauthPort ?? 3000,
+      onTriggerRun: async () => {
+        log.info('Manual classification run triggered from Web UI.');
+        const freshConfig = loadConfig(values.config);
+        const auth = await getAuthenticatedClient(freshConfig.gmail.credentialsPath, freshConfig.gmail.tokenPath, freshConfig.gmail.oauthPort);
+        const gc = new GmailClient(auth);
+        await runClassificationBatch(gc, freshConfig, { dryRun: false });
+      },
+      onCullMemory: async () => {
+        const llm = new LLMEngine({
+          host: config.ollama.host,
+          model: config.ollama.model,
+          contextWindow: config.ollama.contextWindow,
+          temperature: config.ollama.temperature,
+          keepAlive: 0,
+          labelHints: config.classification.labelHints,
+        });
+        await llm.unloadModel();
+        log.info('Memory culled: Ollama model unloaded from RAM.');
+      },
+    });
+    return;
   }
 
   log.info('Initializing Gmail authentication...');

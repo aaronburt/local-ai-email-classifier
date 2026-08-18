@@ -247,6 +247,16 @@ export const buildRemoteEscalationPrompt = (
   return { systemPrompt, userPrompt };
 };
 
+const MAX_BODY_CHARS = 8000;
+
+const truncateBody = (body: string, maxChars = MAX_BODY_CHARS): string => {
+  if (body.length <= maxChars) return body;
+  const headSize = Math.floor(maxChars * 0.75);
+  const tailSize = Math.floor(maxChars * 0.25);
+  const omitted = body.length - headSize - tailSize;
+  return `${body.slice(0, headSize)}\n\n[... ${omitted.toLocaleString()} characters truncated for context limit ...]\n\n${body.slice(-tailSize)}`;
+};
+
 const formatThreadMessages = (thread: ParsedEmailThread): string => {
   return thread.messages
     .map((message, index) => {
@@ -263,7 +273,7 @@ Subject: ${message.subject}`;
               .join('\n\n')}`
           : '';
 
-      return `${header}\n\nBody:\n${message.cleanBody}${attachmentInfo}`;
+      return `${header}\n\nBody:\n${truncateBody(message.cleanBody)}${attachmentInfo}`;
     })
     .join('\n\n========================================\n\n');
 };
