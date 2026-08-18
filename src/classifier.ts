@@ -29,22 +29,27 @@ RULES:
 4. Output your answer in structured JSON matching the requested schema.
 5. Provide a confidence score between 0.0 and 1.0, a concise 1-sentence reasoning, and whether this email requires user action.`;
 
-export const DEFAULT_REMOTE_ESCALATION_SYSTEM_PROMPT = `You are a senior email classification authority performing a deep review of an ambiguous email.
+export const DEFAULT_REMOTE_ESCALATION_SYSTEM_PROMPT = `You are a senior email classification authority and algorithmic rule synthesizer.
 A fast local model was unable to classify this email with high confidence. You must:
 
 1. Carefully analyze the FULL uncompressed email thread, headers, and attachments below.
 2. Select strictly ONE label from the ALLOWED LABELS list.
 3. Output structured JSON with: selected_label, confidence (0.0-1.0), reasoning (1 sentence), is_action_required (boolean).
-4. ALSO output a "learned_rule" object with:
-   - "sender_domain": the sender's email domain (e.g. "netflix.com")
-   - "topic_condition": a short pattern description for when this rule applies (e.g. "recommendation emails with upcoming titles")
-   - "target_label": the correct label for this pattern
-   - "reasoning": a 1-sentence explanation of WHY this pattern maps to this label
+4. ALSO synthesize a high-precision, deterministic "learned_rule" object:
+   - "sender_domain": the sender's clean root email domain (e.g. "amazon.co.uk", "stripe.com", "github.com")
+   - "sender_regex": optional regex for sender local-part/subaddress (e.g. "^(auto-confirm|receipts|no-reply)@")
+   - "subject_pattern": invariant regex matching the subject template with transient variables (dates, amounts, order numbers) wildcarded (e.g. "^(?:Your order of|Order Confirmation|Receipt for)\\\\b.*")
+   - "exclude_pattern": optional negative regex pattern to reject marketing campaigns, promotions, or newsletters sent from the same domain (e.g. "(?:deal|discount|newsletter|sale|promo|recommend)")
+   - "target_label": the correct label name
+   - "reasoning": 1-sentence technical explanation of why this structural invariant pattern accurately classifies this email type
+
+IMPORTANT RULE SYNTHESIS RULES:
+- Never make broad domain-only rules for multi-purpose providers (like Amazon, Google, Apple, Microsoft, PayPal). Always qualify with sender prefix and subject keywords.
+- Never include exact dates, exact prices, or 12+ digit specific order IDs. Use regex wildcards like \\\\d+, [A-Z0-9-]+, or \\\\b.
+- The rule must accurately match this email AND all future emails of this exact category.
 
 ALLOWED LABELS:
-{{ALLOWED_LABELS}}
-
-IMPORTANT: The learned_rule you generate will be used to teach the fast local model so it can handle similar emails independently in the future.`;
+{{ALLOWED_LABELS}}`;
 
 export const DEFAULT_ATTACHMENT_SUMMARY_SYSTEM_PROMPT = `You are a specialized Document Summarization Agent.
 Your sole mission is to read raw document attachments (such as invoices, receipts, contracts, statements, or forms), crush the context down, and extract the key relevant parts of high importance.
@@ -58,9 +63,17 @@ CRITICAL EXTRACTION REQUIREMENTS:
 
 Always output strictly valid JSON conforming to the requested schema.`;
 
+interface CompiledRule {
+  rule: LearnedRule;
+  senderRegex?: RegExp;
+  subjectRegex?: RegExp;
+  excludeRegex?: RegExp;
+}
+
 export class RuleManager {
   private filePath: string;
   private rules: LearnedRule[] = [];
+  private compiledRules: CompiledRule[] = [];
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -70,6 +83,7 @@ export class RuleManager {
   private loadRules(): void {
     if (!existsSync(this.filePath)) {
       this.rules = [];
+      this.compiledRules = [];
       return;
     }
     try {
@@ -78,46 +92,197 @@ export class RuleManager {
     } catch {
       this.rules = [];
     }
+    this.recompile();
+  }
+
+  private recompile(): void {
+    this.compiledRules = this.rules.map((rule) => {
+      let senderRegex: RegExp | undefined;
+      let subjectRegex: RegExp | undefined;
+      let excludeRegex: RegExp | undefined;
+
+      if (rule.senderRegex) {
+        try {
+          senderRegex = new RegExp(rule.senderRegex, 'i');
+        } catch {}
+      }
+
+      if (rule.subjectPattern) {
+        try {
+          subjectRegex = new RegExp(rule.subjectPattern, 'i');
+        } catch {}
+      }
+
+      if (rule.excludePattern) {
+        try {
+          excludeRegex = new RegExp(rule.excludePattern, 'i');
+        } catch {}
+      }
+
+      return { rule, senderRegex, subjectRegex, excludeRegex };
+    });
   }
 
   public getActiveRules(): LearnedRule[] {
     return this.rules;
   }
 
-  public addRule(rule: Omit<LearnedRule, 'id' | 'createdAt'>): LearnedRule {
+  public evaluate(
+    sender: string,
+    subject: string,
+    snippet?: string
+  ): { rule: LearnedRule; confidence: number } | undefined {
+    const emailMatch = sender.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    const domain = emailMatch && emailMatch[1] ? emailMatch[1].toLowerCase() : '';
+    if (!domain) return undefined;
+
+    const fullSubjectAndSnippet = `${subject} ${snippet ?? ''}`.trim();
+
+    // 1. Check compiled algorithmic rules first (highest precision)
+    for (const entry of this.compiledRules) {
+      const r = entry.rule;
+      const targetDomain = r.senderDomain.toLowerCase();
+      const domainMatches = domain === targetDomain || domain.endsWith(`.${targetDomain}`);
+      if (!domainMatches) continue;
+
+      // Check sender regex if present
+      if (entry.senderRegex && !entry.senderRegex.test(sender)) {
+        continue;
+      }
+
+      // Check subject pattern if present
+      if (entry.subjectRegex && !entry.subjectRegex.test(subject) && !entry.subjectRegex.test(fullSubjectAndSnippet)) {
+        continue;
+      }
+
+      // Check negative exclusion pattern if present
+      if (entry.excludeRegex && (entry.excludeRegex.test(subject) || entry.excludeRegex.test(fullSubjectAndSnippet))) {
+        continue;
+      }
+
+      // If it has at least subjectPattern or senderRegex, it's an algorithmic match
+      if (r.subjectPattern || r.senderRegex) {
+        r.hitCount = (r.hitCount ?? 0) + 1;
+        r.lastMatchedAt = new Date().toISOString();
+        this.saveRules();
+        return { rule: r, confidence: 1.0 };
+      }
+    }
+
+    // 2. Legacy fallback for simple domain rules where all domain rules agree
+    const matchingLegacyRules = this.rules.filter(
+      (r) => !r.subjectPattern && !r.senderRegex && (domain === r.senderDomain.toLowerCase() || domain.endsWith(`.${r.senderDomain.toLowerCase()}`))
+    );
+
+    if (matchingLegacyRules.length > 0) {
+      const firstLabel = matchingLegacyRules[0]?.targetLabel;
+      const allAgree = matchingLegacyRules.every((r) => r.targetLabel === firstLabel);
+      if (allAgree && matchingLegacyRules[0]) {
+        matchingLegacyRules[0].hitCount = (matchingLegacyRules[0].hitCount ?? 0) + 1;
+        matchingLegacyRules[0].lastMatchedAt = new Date().toISOString();
+        this.saveRules();
+        return { rule: matchingLegacyRules[0], confidence: 1.0 };
+      }
+    }
+
+    return undefined;
+  }
+
+  public validateAndAddRule(
+    ruleCandidate: {
+      sender_domain: string;
+      sender_regex?: string | null;
+      subject_pattern: string;
+      exclude_pattern?: string | null;
+      target_label: string;
+      reasoning: string;
+    },
+    sampleEmail?: { sender: string; subject: string }
+  ): LearnedRule | null {
+    // 1. Verify regex syntax
+    let senderRegex: RegExp | undefined;
+    let subjectRegex: RegExp | undefined;
+    let excludeRegex: RegExp | undefined;
+
+    if (ruleCandidate.sender_regex) {
+      try {
+        senderRegex = new RegExp(ruleCandidate.sender_regex, 'i');
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      subjectRegex = new RegExp(ruleCandidate.subject_pattern, 'i');
+    } catch {
+      return null;
+    }
+
+    if (ruleCandidate.exclude_pattern) {
+      try {
+        excludeRegex = new RegExp(ruleCandidate.exclude_pattern, 'i');
+      } catch {
+        return null;
+      }
+    }
+
+    // 2. Self-test against sample email
+    if (sampleEmail) {
+      const emailDomainMatch = sampleEmail.sender.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+      const emailDomain = emailDomainMatch && emailDomainMatch[1] ? emailDomainMatch[1].toLowerCase() : '';
+      const candidateDomain = ruleCandidate.sender_domain.toLowerCase();
+
+      const domainOk = emailDomain === candidateDomain || emailDomain.endsWith(`.${candidateDomain}`);
+      if (!domainOk) return null;
+
+      if (senderRegex && !senderRegex.test(sampleEmail.sender)) {
+        return null;
+      }
+
+      if (subjectRegex && !subjectRegex.test(sampleEmail.subject)) {
+        return null;
+      }
+
+      if (excludeRegex && excludeRegex.test(sampleEmail.subject)) {
+        return null;
+      }
+    }
+
+    // 3. Invariant check: reject raw 12+ digit random order IDs or raw ISO dates without wildcarding
+    if (/\b\d{12,}\b/.test(ruleCandidate.subject_pattern) || /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(ruleCandidate.subject_pattern)) {
+      return null;
+    }
+
+    // 4. Upsert rule
     const existingIndex = this.rules.findIndex(
       (r) =>
-        r.senderDomain.toLowerCase() === rule.senderDomain.toLowerCase() &&
-        r.topicCondition.toLowerCase() === rule.topicCondition.toLowerCase()
+        r.senderDomain.toLowerCase() === ruleCandidate.sender_domain.toLowerCase() &&
+        r.subjectPattern?.toLowerCase() === ruleCandidate.subject_pattern.toLowerCase()
     );
 
     const newRule: LearnedRule = {
-      ...rule,
-      id: randomUUID(),
-      createdAt: new Date().toISOString(),
+      id: existingIndex >= 0 ? this.rules[existingIndex]?.id ?? randomUUID() : randomUUID(),
+      senderDomain: ruleCandidate.sender_domain.toLowerCase().trim(),
+      senderRegex: ruleCandidate.sender_regex ?? undefined,
+      subjectPattern: ruleCandidate.subject_pattern,
+      excludePattern: ruleCandidate.exclude_pattern ?? undefined,
+      topicCondition: ruleCandidate.subject_pattern,
+      targetLabel: ruleCandidate.target_label,
+      reasoning: ruleCandidate.reasoning,
+      createdAt: existingIndex >= 0 ? this.rules[existingIndex]?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
+      hitCount: existingIndex >= 0 ? this.rules[existingIndex]?.hitCount : 1,
+      lastMatchedAt: new Date().toISOString(),
     };
 
     if (existingIndex >= 0) {
       this.rules[existingIndex] = newRule;
     } else {
-      this.rules.push(newRule);
+      this.rules.unshift(newRule);
     }
 
     this.saveRules();
+    this.recompile();
     return newRule;
-  }
-
-  public findStrictDomainMatch(sender: string): LearnedRule | undefined {
-    const emailMatch = sender.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-    if (!emailMatch || !emailMatch[1]) return undefined;
-    const domain = emailMatch[1].toLowerCase();
-    const matchingRules = this.rules.filter(
-      (r) => domain === r.senderDomain.toLowerCase() || domain.endsWith(`.${r.senderDomain.toLowerCase()}`)
-    );
-    if (matchingRules.length === 0) return undefined;
-    const firstLabel = matchingRules[0]?.targetLabel;
-    const allAgree = matchingRules.every((r) => r.targetLabel === firstLabel);
-    return allAgree ? matchingRules[0] : undefined;
   }
 
   private saveRules(): void {
@@ -200,10 +365,11 @@ export const buildClassificationPrompt = (
     learnedRules.length > 0
       ? `\n\nLEARNED DISAMBIGUATION RULES (Prioritize these patterns):\n` +
         learnedRules
-          .map(
-            (r) =>
-              `- From *@${r.senderDomain} when "${r.topicCondition}" → Label: "${r.targetLabel}" (${r.reasoning})`
-          )
+          .slice(0, 50)
+          .map((r) => {
+            const pattern = r.subjectPattern ? ` matching /${r.subjectPattern}/` : r.topicCondition ? ` when "${r.topicCondition}"` : '';
+            return `- From *@${r.senderDomain}${pattern} → Label: "${r.targetLabel}" (${r.reasoning})`;
+          })
           .join('\n')
       : '';
 

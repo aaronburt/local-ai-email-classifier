@@ -600,21 +600,22 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
     <!-- Tab 3: Learned Rules -->
     <div id="pane-rules" class="tab-pane">
       <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-        <input type="text" id="rules-filter" class="search-input" placeholder="Filter rules by domain or label..." oninput="filterRules()" style="width: 300px;">
+        <input type="text" id="rules-filter" class="search-input" placeholder="Filter algorithmic rules by domain, regex, or label..." oninput="filterRules()" style="width: 360px;">
         <span id="rules-filter-count" style="font-size: 12px; color: var(--text-muted);"></span>
       </div>
       <div class="data-table-wrap">
         <table>
           <thead>
             <tr>
-              <th style="width: 22%;">Domain</th>
-              <th style="width: 15%;">Target Label</th>
-              <th style="width: 28%;">Condition</th>
-              <th style="width: 35%;">Reasoning</th>
+              <th style="width: 22%;">Domain & Sender</th>
+              <th style="width: 14%;">Target Label</th>
+              <th style="width: 32%;">Subject Invariant Regex</th>
+              <th style="width: 8%;">Hits</th>
+              <th style="width: 24%;">Rationale</th>
             </tr>
           </thead>
           <tbody id="rules-tbody">
-            <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading rules...</td></tr>
+            <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading rules...</td></tr>
           </tbody>
         </table>
       </div>
@@ -772,15 +773,27 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
       const tbody = document.getElementById('rules-tbody');
       document.getElementById('rules-filter-count').textContent = 'Showing ' + rules.length + ' rules';
       if (rules.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">No rules found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No rules found</td></tr>';
         return;
       }
-      tbody.innerHTML = rules.map(r => '<tr>' +
-        '<td><code>' + (r.senderDomain || '-') + '</code></td>' +
-        '<td><span class="label-pill">' + (r.targetLabel || '-') + '</span></td>' +
-        '<td style="color: var(--text);">' + (r.topicCondition || '-') + '</td>' +
-        '<td style="color: var(--text-muted);">' + (r.reasoning || '-') + '</td>' +
-        '</tr>').join('');
+      tbody.innerHTML = rules.map(r => {
+        const domainCol = '<code>' + (r.senderDomain || '-') + '</code>' +
+          (r.senderRegex ? '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Sender: <code>/' + r.senderRegex + '/</code></div>' : '');
+
+        const patternCol = r.subjectPattern
+          ? '<code>/' + r.subjectPattern + '/</code>' + (r.excludePattern ? '<div style="font-size: 11px; color: #ff7b72; margin-top: 2px;">Exclude: <code>/' + r.excludePattern + '/</code></div>' : '')
+          : (r.topicCondition || '-');
+
+        const hitsCol = '<span class="meta-tag">' + (r.hitCount || 0) + '</span>';
+
+        return '<tr>' +
+          '<td>' + domainCol + '</td>' +
+          '<td><span class="label-pill">' + (r.targetLabel || '-') + '</span></td>' +
+          '<td>' + patternCol + '</td>' +
+          '<td>' + hitsCol + '</td>' +
+          '<td style="color: var(--text-muted); font-size: 11.5px;">' + (r.reasoning || '-') + '</td>' +
+          '</tr>';
+      }).join('');
     };
 
     const filterRules = () => {
@@ -789,7 +802,10 @@ const renderAppHtml = (state: WebServerState, hasPasswordAuth: boolean): string 
         !query ||
         (r.senderDomain && r.senderDomain.toLowerCase().includes(query)) ||
         (r.targetLabel && r.targetLabel.toLowerCase().includes(query)) ||
-        (r.topicCondition && r.topicCondition.toLowerCase().includes(query))
+        (r.subjectPattern && r.subjectPattern.toLowerCase().includes(query)) ||
+        (r.excludePattern && r.excludePattern.toLowerCase().includes(query)) ||
+        (r.topicCondition && r.topicCondition.toLowerCase().includes(query)) ||
+        (r.reasoning && r.reasoning.toLowerCase().includes(query))
       );
       renderRules(filtered);
     };

@@ -44,10 +44,15 @@ export type PartialAppConfig = {
 export interface LearnedRule {
   id: string;
   senderDomain: string;
-  topicCondition: string;
+  senderRegex?: string;
+  subjectPattern?: string;
+  excludePattern?: string;
+  topicCondition?: string;
   targetLabel: string;
   reasoning: string;
   createdAt: string;
+  hitCount?: number;
+  lastMatchedAt?: string;
 }
 
 export interface EmailAttachment {
@@ -82,6 +87,17 @@ export interface GmailUserLabel {
   type: string;
 }
 
+export const SynthesizedAlgorithmicRuleSchema = z.object({
+  sender_domain: z.string().describe('Clean domain of the sender without protocol or subaddress (e.g. "amazon.co.uk", "stripe.com", "github.com")'),
+  sender_regex: z.string().nullable().optional().describe('Optional regex matching sender local-part/subaddress (e.g. "^(auto-confirm|receipts)@")'),
+  subject_pattern: z.string().describe('Invariant regex pattern matching the subject template with variables wildcarded (e.g. "^(?:Your order of|Order Confirmation)\\\\b.*")'),
+  exclude_pattern: z.string().nullable().optional().describe('Optional negative regex to disqualify marketing/promos (e.g. "(?:deal|newsletter|discount)")'),
+  target_label: z.string().describe('The target label name to assign'),
+  reasoning: z.string().describe('Explanation of why this structural invariant pattern accurately classifies emails into the target label'),
+});
+
+export type SynthesizedAlgorithmicRule = z.infer<typeof SynthesizedAlgorithmicRuleSchema>;
+
 export const createClassificationSchema = (allowedLabels: readonly string[], options?: { withRule?: boolean }) => {
   const confidenceSchema = z.number().transform((val) => (val > 1 ? Math.min(val / 100, 1.0) : Math.max(0, Math.min(val, 1.0))));
   const firstLabel = allowedLabels[0];
@@ -99,12 +115,7 @@ export const createClassificationSchema = (allowedLabels: readonly string[], opt
   if (options?.withRule) {
     return z.object({
       ...baseSchema,
-      learned_rule: z.object({
-        sender_domain: z.string(),
-        topic_condition: z.string(),
-        target_label: z.string(),
-        reasoning: z.string(),
-      }).optional(),
+      learned_rule: SynthesizedAlgorithmicRuleSchema.optional(),
     });
   }
 
@@ -122,12 +133,7 @@ export interface ClassificationResult {
 }
 
 export interface RemoteClassificationResult extends ClassificationResult {
-  learned_rule?: {
-    sender_domain: string;
-    topic_condition: string;
-    target_label: string;
-    reasoning: string;
-  };
+  learned_rule?: SynthesizedAlgorithmicRule;
 }
 
 export const AttachmentSummarySchema = z.object({

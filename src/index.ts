@@ -377,15 +377,16 @@ export const runClassificationBatch = async (
       const subject = latestMessage?.subject ?? 'No Subject';
       const sender = latestMessage?.sender ?? 'Unknown Sender';
 
-      const directRuleMatch = !trainingMode ? ruleManager.findStrictDomainMatch(sender) : undefined;
+      const directRuleMatch = !trainingMode ? ruleManager.evaluate(sender, subject, latestMessage?.cleanBody) : undefined;
       let classification: ClassificationResult;
 
       if (directRuleMatch) {
-        log.info(`[${index + 1}/${messageIds.length}] [Direct Rule] "${sender}" matches "${directRuleMatch.senderDomain}" -> "${directRuleMatch.targetLabel}"`);
+        const patternDesc = directRuleMatch.rule.subjectPattern ? ` /${directRuleMatch.rule.subjectPattern}/` : '';
+        log.info(`[${index + 1}/${messageIds.length}] [Tier 0 Algorithmic Match] "${sender}"${patternDesc} -> "${directRuleMatch.rule.targetLabel}"`);
         classification = {
-          selected_label: directRuleMatch.targetLabel,
-          confidence: 1.0,
-          reasoning: directRuleMatch.reasoning,
+          selected_label: directRuleMatch.rule.targetLabel,
+          confidence: directRuleMatch.confidence,
+          reasoning: directRuleMatch.rule.reasoning,
           is_action_required: false,
         };
       } else {
@@ -418,13 +419,14 @@ export const runClassificationBatch = async (
             }
 
             if (remoteResult.learned_rule) {
-              const newRule = ruleManager.addRule({
-                senderDomain: remoteResult.learned_rule.sender_domain,
-                topicCondition: remoteResult.learned_rule.topic_condition,
-                targetLabel: remoteResult.learned_rule.target_label,
-                reasoning: remoteResult.learned_rule.reasoning,
-              });
-              log.info(`[Rule Learned] "${newRule.senderDomain}" → "${newRule.targetLabel}": ${newRule.reasoning}`);
+              const validatedRule = ruleManager.validateAndAddRule(
+                remoteResult.learned_rule,
+                { sender, subject }
+              );
+              if (validatedRule) {
+                const patternDesc = validatedRule.subjectPattern ? ` /${validatedRule.subjectPattern}/` : '';
+                log.info(`[Algorithmic Rule Synthesized] "${validatedRule.senderDomain}"${patternDesc} → "${validatedRule.targetLabel}": ${validatedRule.reasoning}`);
+              }
             }
           } catch (err) {
             log.warn(`Remote model (${escalationModel}) unavailable, keeping Tier 1 result:`, err instanceof Error ? err.message : String(err));
