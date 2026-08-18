@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import { Ollama } from 'ollama';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -193,7 +192,8 @@ export class RuleManager {
     ruleCandidate: {
       sender_domain: string;
       sender_regex?: string | null;
-      subject_pattern: string;
+      subject_pattern?: string | null;
+      topic_condition?: string;
       exclude_pattern?: string | null;
       target_label: string;
       reasoning: string;
@@ -213,10 +213,12 @@ export class RuleManager {
       }
     }
 
-    try {
-      subjectRegex = new RegExp(ruleCandidate.subject_pattern, 'i');
-    } catch {
-      return null;
+    if (ruleCandidate.subject_pattern) {
+      try {
+        subjectRegex = new RegExp(ruleCandidate.subject_pattern, 'i');
+      } catch {
+        return null;
+      }
     }
 
     if (ruleCandidate.exclude_pattern) {
@@ -227,7 +229,7 @@ export class RuleManager {
       }
     }
 
-    // 2. Self-test against sample email
+    // 2. Self-test against sample email if provided
     if (sampleEmail) {
       const emailDomainMatch = sampleEmail.sender.match(/@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
       const emailDomain = emailDomainMatch && emailDomainMatch[1] ? emailDomainMatch[1].toLowerCase() : '';
@@ -250,7 +252,10 @@ export class RuleManager {
     }
 
     // 3. Invariant check: reject raw 12+ digit random order IDs or raw ISO dates without wildcarding
-    if (/\b\d{12,}\b/.test(ruleCandidate.subject_pattern) || /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(ruleCandidate.subject_pattern)) {
+    if (
+      ruleCandidate.subject_pattern &&
+      (/\b\d{12,}\b/.test(ruleCandidate.subject_pattern) || /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(ruleCandidate.subject_pattern))
+    ) {
       return null;
     }
 
@@ -258,16 +263,16 @@ export class RuleManager {
     const existingIndex = this.rules.findIndex(
       (r) =>
         r.senderDomain.toLowerCase() === ruleCandidate.sender_domain.toLowerCase() &&
-        r.subjectPattern?.toLowerCase() === ruleCandidate.subject_pattern.toLowerCase()
+        (ruleCandidate.subject_pattern ? r.subjectPattern === ruleCandidate.subject_pattern : r.topicCondition === ruleCandidate.topic_condition)
     );
 
     const newRule: LearnedRule = {
       id: existingIndex >= 0 ? this.rules[existingIndex]?.id ?? randomUUID() : randomUUID(),
       senderDomain: ruleCandidate.sender_domain.toLowerCase().trim(),
       senderRegex: ruleCandidate.sender_regex ?? undefined,
-      subjectPattern: ruleCandidate.subject_pattern,
+      subjectPattern: ruleCandidate.subject_pattern ?? undefined,
+      topicCondition: ruleCandidate.topic_condition ?? undefined,
       excludePattern: ruleCandidate.exclude_pattern ?? undefined,
-      topicCondition: ruleCandidate.subject_pattern,
       targetLabel: ruleCandidate.target_label,
       reasoning: ruleCandidate.reasoning,
       createdAt: existingIndex >= 0 ? this.rules[existingIndex]?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
@@ -308,19 +313,27 @@ export const upgradeLegacyRules = async (
 
   onProgress?.(`Found ${legacyRules.length} rule(s) to augment with algorithmic regex patterns using "${modelName}"...`);
 
-  const UpgradeSchema = z.object({
-    upgrades: z.array(
-      z.object({
-        id: z.string(),
-        sender_regex: z.string().nullable().optional(),
-        subject_pattern: z.string(),
-        exclude_pattern: z.string().nullable().optional(),
-      })
-    ),
-  });
+  const directSchema = {
+    type: 'object',
+    properties: {
+      upgrades: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            sender_regex: { type: 'string' },
+            subject_pattern: { type: 'string' },
+            exclude_pattern: { type: 'string' },
+          },
+          required: ['id', 'subject_pattern'],
+        },
+      },
+    },
+    required: ['upgrades'],
+  };
 
-  const jsonSchema = zodToJsonSchema(UpgradeSchema, 'RuleUpgrades');
-  const BATCH_SIZE = 10;
+  const BATCH_SIZE = 5;
   let totalUpgraded = 0;
 
   for (let i = 0; i < legacyRules.length; i += BATCH_SIZE) {
@@ -351,43 +364,56 @@ ${JSON.stringify(
       const response = await client.chat({
         model: modelName,
         messages: [
-          { role: 'system', content: 'Output valid JSON with synthesized regex patterns for each rule id.' },
+          { role: 'system', content: 'Output valid JSON conforming to the schema with synthesized regex patterns for each rule id.' },
           { role: 'user', content: prompt },
         ],
-        format: jsonSchema as Record<string, unknown>,
+        format: directSchema as Record<string, unknown>,
         options: { temperature: 0.1 },
       });
 
-      const parsed = parseJsonPayload(response.message.content) as {
-        upgrades: Array<{
-          id: string;
-          sender_regex?: string | null;
-          subject_pattern: string;
-          exclude_pattern?: string | null;
-        }>;
-      };
+      const rawParsed = parseJsonPayload(response.message.content) as Record<string, unknown>;
+      let upgradeList: Array<{
+        id: string;
+        sender_regex?: string | null;
+        subject_pattern?: string | null;
+        exclude_pattern?: string | null;
+      }> = [];
 
-      if (parsed.upgrades && Array.isArray(parsed.upgrades)) {
-        for (const item of parsed.upgrades) {
-          const rule = allRules.find((r) => r.id === item.id);
-          if (!rule || !item.subject_pattern) continue;
+      if (Array.isArray(rawParsed)) {
+        upgradeList = rawParsed;
+      } else if (rawParsed && Array.isArray(rawParsed['upgrades'])) {
+        upgradeList = rawParsed['upgrades'] as typeof upgradeList;
+      } else if (rawParsed && typeof rawParsed === 'object') {
+        upgradeList = Object.entries(rawParsed).map(([key, val]) => {
+          const v = val as Record<string, unknown>;
+          return {
+            id: (v['id'] as string) ?? key,
+            sender_regex: (v['sender_regex'] as string) ?? null,
+            subject_pattern: (v['subject_pattern'] as string) ?? null,
+            exclude_pattern: (v['exclude_pattern'] as string) ?? null,
+          };
+        });
+      }
 
-          // Test regex validity
-          try {
-            new RegExp(item.subject_pattern, 'i');
-            if (item.sender_regex) new RegExp(item.sender_regex, 'i');
-            if (item.exclude_pattern) new RegExp(item.exclude_pattern, 'i');
-          } catch {
-            continue;
-          }
+      for (const item of upgradeList) {
+        const rule = allRules.find((r) => r.id === item.id);
+        if (!rule || !item.subject_pattern) continue;
 
-          // Attach algorithmic fields while preserving topicCondition and reasoning
-          rule.subjectPattern = item.subject_pattern;
-          if (item.sender_regex) rule.senderRegex = item.sender_regex;
-          if (item.exclude_pattern) rule.excludePattern = item.exclude_pattern;
-          rule.lastMatchedAt = new Date().toISOString();
-          totalUpgraded += 1;
+        // Test regex validity
+        try {
+          new RegExp(item.subject_pattern, 'i');
+          if (item.sender_regex) new RegExp(item.sender_regex, 'i');
+          if (item.exclude_pattern) new RegExp(item.exclude_pattern, 'i');
+        } catch {
+          continue;
         }
+
+        // Attach algorithmic fields while preserving topicCondition and reasoning
+        rule.subjectPattern = item.subject_pattern;
+        if (item.sender_regex) rule.senderRegex = item.sender_regex;
+        if (item.exclude_pattern) rule.excludePattern = item.exclude_pattern;
+        rule.lastMatchedAt = new Date().toISOString();
+        totalUpgraded += 1;
       }
 
       ruleManager.saveRules();
@@ -559,7 +585,25 @@ const parseJsonPayload = (content: string): unknown => {
   const trimmed = content.trim();
   const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   const rawJson = jsonMatch ? jsonMatch[1] : trimmed;
-  return JSON.parse(rawJson ?? trimmed);
+  try {
+    return JSON.parse(rawJson ?? trimmed);
+  } catch {
+    const firstBrace = trimmed.indexOf('{');
+    const lastBrace = trimmed.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+      } catch {}
+    }
+    const firstBracket = trimmed.indexOf('[');
+    const lastBracket = trimmed.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+      try {
+        return JSON.parse(trimmed.slice(firstBracket, lastBracket + 1));
+      } catch {}
+    }
+    throw new Error(`Failed to parse JSON: ${trimmed.slice(0, 100)}...`);
+  }
 };
 
 export class LLMEngine {

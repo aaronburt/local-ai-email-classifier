@@ -90,7 +90,8 @@ export interface GmailUserLabel {
 export const SynthesizedAlgorithmicRuleSchema = z.object({
   sender_domain: z.string().describe('Clean domain of the sender without protocol or subaddress (e.g. "amazon.co.uk", "stripe.com", "github.com")'),
   sender_regex: z.string().nullable().optional().describe('Optional regex matching sender local-part/subaddress (e.g. "^(auto-confirm|receipts)@")'),
-  subject_pattern: z.string().describe('Invariant regex pattern matching the subject template with variables wildcarded (e.g. "^(?:Your order of|Order Confirmation)\\\\b.*")'),
+  subject_pattern: z.string().optional().describe('Invariant regex pattern matching the subject template with variables wildcarded (e.g. "^(?:Your order of|Order Confirmation)\\\\b.*")'),
+  topic_condition: z.string().optional().describe('English description of condition if subject_pattern is not applicable'),
   exclude_pattern: z.string().nullable().optional().describe('Optional negative regex to disqualify marketing/promos (e.g. "(?:deal|newsletter|discount)")'),
   target_label: z.string().describe('The target label name to assign'),
   reasoning: z.string().describe('Explanation of why this structural invariant pattern accurately classifies emails into the target label'),
