@@ -33,6 +33,25 @@ export interface WebServerState {
 const logBuffer: string[] = [];
 const sseClients = new Set<ServerResponse>();
 
+const resolveDataPath = (fileName: string, explicitPath?: string): string => {
+  const targetName = explicitPath ?? fileName;
+  if (targetName.startsWith('/') || /^[a-zA-Z]:/.test(targetName)) {
+    return targetName;
+  }
+  const dataSubpath = `${process.cwd()}/data/${targetName}`;
+  if (existsSync(dataSubpath)) {
+    return dataSubpath;
+  }
+  const rootPath = `${process.cwd()}/${targetName}`;
+  if (existsSync(rootPath)) {
+    return rootPath;
+  }
+  if (existsSync(`${process.cwd()}/data`)) {
+    return dataSubpath;
+  }
+  return rootPath;
+};
+
 export const appendWebLog = (rawLine: string): void => {
   const line = rawLine.trim();
   if (!line) return;
@@ -43,8 +62,16 @@ export const appendWebLog = (rawLine: string): void => {
 
   const sseData = `data: ${JSON.stringify({ log: line, timestamp: new Date().toISOString() })}\n\n`;
   for (const client of sseClients) {
+    if (client.destroyed || client.writableEnded) {
+      sseClients.delete(client);
+      continue;
+    }
     try {
-      client.write(sseData);
+      client.write(sseData, (err) => {
+        if (err) {
+          sseClients.delete(client);
+        }
+      });
     } catch {
       sseClients.delete(client);
     }
@@ -986,17 +1013,25 @@ export const startPersistentWebServer = (options: {
         }
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache, no-transform',
           Connection: 'keep-alive',
           'Access-Control-Allow-Origin': '*',
         });
+        res.flushHeaders?.();
 
         for (const line of logBuffer) {
           res.write(`data: ${JSON.stringify({ log: line, timestamp: new Date().toISOString() })}\n\n`);
         }
 
+        const cleanup = () => {
+          sseClients.delete(res);
+        };
+
         sseClients.add(res);
-        req.on('close', () => sseClients.delete(res));
+        req.on('close', cleanup);
+        req.on('error', cleanup);
+        res.on('close', cleanup);
+        res.on('error', cleanup);
         return;
       }
 
@@ -1009,25 +1044,6 @@ export const startPersistentWebServer = (options: {
         });
         return;
       }
-
-const resolveDataPath = (fileName: string, explicitPath?: string): string => {
-  const targetName = explicitPath ?? fileName;
-  if (targetName.startsWith('/') || /^[a-zA-Z]:/.test(targetName)) {
-    return targetName;
-  }
-  const dataSubpath = `${process.cwd()}/data/${targetName}`;
-  if (existsSync(dataSubpath)) {
-    return dataSubpath;
-  }
-  const rootPath = `${process.cwd()}/${targetName}`;
-  if (existsSync(rootPath)) {
-    return rootPath;
-  }
-  if (existsSync(`${process.cwd()}/data`)) {
-    return dataSubpath;
-  }
-  return rootPath;
-};
 
       if (pathname === '/api/smart-replies' && req.method === 'GET') {
         if (!isAuthorized(req)) {

@@ -68,6 +68,14 @@ const registerSignalHandlers = (engineRef?: { current?: LLMEngine }): void => {
 
   process.on('SIGTERM', () => handleSignal('SIGTERM'));
   process.on('SIGINT', () => handleSignal('SIGINT'));
+
+  process.on('uncaughtException', (err) => {
+    log.error(`Uncaught exception: ${err instanceof Error ? err.message : String(err)}`, err instanceof Error ? err.stack : undefined);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    log.error(`Unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}`);
+  });
 };
 
 const parseEnvNumber = (key: string, fallback: number): number => {

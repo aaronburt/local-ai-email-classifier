@@ -69,7 +69,12 @@ if [ "$1" = "cron" ] || [ "$1" = "--daemon" ] || [ -z "$1" ]; then
   ) | crontab -
 
   echo "[INFO] Starting persistent Web Dashboard server on port 3000..."
-  /usr/local/bin/node dist/index.js --server &
+  (
+    while true; do
+      /usr/local/bin/node dist/index.js --server > /proc/1/fd/1 2> /proc/1/fd/2 || true
+      sleep 2
+    done
+  ) &
   SERVER_PID=$!
 
   echo "[INFO] Starting initial classification pass on startup..."
